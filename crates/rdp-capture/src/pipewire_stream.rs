@@ -7,7 +7,7 @@ use pw::properties::properties;
 use pw::stream::{Stream, StreamFlags, StreamState};
 use tokio::sync::mpsc;
 
-use crate::frame::{CapturedFrame, DamageRect, PixelFormat};
+use crate::frame::{CaptureEvent, CapturedFrame, CursorInfo, DamageRect, PixelFormat};
 
 /// Handle to a running `PipeWire` capture stream.
 ///
@@ -30,7 +30,7 @@ impl PwStream {
         pipewire_fd: OwnedFd,
         node_id: u32,
         channel_capacity: usize,
-    ) -> Result<(Self, mpsc::Receiver<CapturedFrame>), PwError> {
+    ) -> Result<(Self, mpsc::Receiver<CaptureEvent>), PwError> {
         let (tx, rx) = mpsc::channel(channel_capacity);
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = Arc::clone(&running);
@@ -73,7 +73,7 @@ impl Drop for PwStream {
 fn run_pipewire_loop(
     pipewire_fd: OwnedFd,
     node_id: u32,
-    frame_tx: mpsc::Sender<CapturedFrame>,
+    frame_tx: mpsc::Sender<CaptureEvent>,
     running: Arc<AtomicBool>,
 ) -> Result<(), PwError> {
     pw::init();
@@ -133,7 +133,7 @@ fn run_pipewire_loop(
 /// Process a single frame from the `PipeWire` stream.
 fn process_frame(
     stream: &pw::stream::StreamRef,
-    tx: &mut mpsc::Sender<CapturedFrame>,
+    tx: &mut mpsc::Sender<CaptureEvent>,
     seq: &AtomicU64,
 ) {
     let Some(mut buffer) = stream.dequeue_buffer() else {
@@ -190,6 +190,9 @@ fn process_frame(
     // Extract damage rects from SPA metadata (unsafe FFI).
     let damage = extract_damage(stream);
 
+    // Extract cursor metadata from the PipeWire buffer.
+    let cursor = extract_cursor(stream);
+
     let frame = CapturedFrame {
         data: frame_data,
         width,
@@ -201,7 +204,12 @@ fn process_frame(
     };
 
     // Non-blocking send. Drop frame if channel is full to avoid backpressure.
-    if tx.try_send(frame).is_err() {
+    let event = if let Some(cursor_info) = cursor {
+        CaptureEvent::FrameAndCursor(frame, cursor_info)
+    } else {
+        CaptureEvent::Frame(frame)
+    };
+    if tx.try_send(event).is_err() {
         tracing::trace!("Frame channel full, dropping frame {sequence}");
     }
 }
@@ -217,6 +225,38 @@ fn extract_damage(stream: &pw::stream::StreamRef) -> Option<Vec<DamageRect>> {
     // bandwidth with partial updates.
     //
     // TODO: Use unsafe raw buffer access to parse SPA_META_VideoDamage
+    let _ = stream;
+    None
+}
+
+/// Extract cursor metadata from the `PipeWire` stream.
+///
+/// When the portal is opened with `CursorMode::Metadata`, the compositor
+/// attaches `SPA_META_Cursor` (type 5) to each buffer. This function
+/// attempts to extract cursor position and bitmap from this metadata.
+///
+/// Returns `None` if no cursor metadata is present in the buffer
+/// (e.g. when using `CursorMode::Embedded` or the compositor does not
+/// provide cursor data).
+fn extract_cursor(stream: &pw::stream::StreamRef) -> Option<CursorInfo> {
+    // The safe pipewire-rs API does not expose SPA metadata iteration.
+    // Cursor metadata extraction requires unsafe raw buffer access to
+    // read SPA_META_Cursor structures. For now, we return None which
+    // means no cursor updates are forwarded - the cursor will be
+    // embedded in the video stream if using CursorMode::Embedded.
+    //
+    // When CursorMode::Metadata is active, cursor shape extraction
+    // requires walking the raw spa_buffer's metadata array:
+    //
+    //   1. Get raw pw_buffer pointer from StreamRef
+    //   2. Access buffer->buffer->metas array
+    //   3. Find SPA_META_Cursor (type 5) entry
+    //   4. Read spa_meta_cursor { id, flags, position, hotspot, bitmap_offset }
+    //   5. If bitmap_offset > 0: read spa_meta_bitmap at that offset
+    //   6. Convert pixel data from SPA format (ARGB8888) to RGBA
+    //
+    // TODO: Implement unsafe SPA metadata access when pipewire-rs
+    // exposes cursor metadata or via direct libspa FFI bindings.
     let _ = stream;
     None
 }

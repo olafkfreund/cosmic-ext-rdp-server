@@ -31,6 +31,9 @@ pub struct ServerConfig {
 
     /// Clipboard settings.
     pub clipboard: ClipboardConfig,
+
+    /// Audio forwarding settings.
+    pub audio: AudioConfig,
 }
 
 /// NLA authentication configuration.
@@ -61,6 +64,34 @@ pub struct CaptureConfig {
 
     /// `PipeWire` channel capacity (number of buffered frames).
     pub channel_capacity: usize,
+
+    /// Enable multi-monitor capture (merges all selected monitors into
+    /// a single virtual desktop).
+    pub multi_monitor: bool,
+}
+
+/// Audio forwarding settings.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct AudioConfig {
+    /// Enable RDPSND audio forwarding.
+    pub enable: bool,
+
+    /// Audio sample rate in Hz.
+    pub sample_rate: u32,
+
+    /// Number of audio channels.
+    pub channels: u16,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            sample_rate: 44100,
+            channels: 2,
+        }
+    }
 }
 
 /// Clipboard sharing settings.
@@ -102,6 +133,7 @@ impl Default for ServerConfig {
             capture: CaptureConfig::default(),
             encode: EncodeConfig::default(),
             clipboard: ClipboardConfig::default(),
+            audio: AudioConfig::default(),
         }
     }
 }
@@ -112,6 +144,7 @@ impl Default for CaptureConfig {
         Self {
             fps: 30,
             channel_capacity: 4,
+            multi_monitor: false,
         }
     }
 }

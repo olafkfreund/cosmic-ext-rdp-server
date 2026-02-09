@@ -103,10 +103,40 @@ in
                   default = 4;
                   description = "PipeWire channel capacity (number of buffered frames).";
                 };
+                multi_monitor = mkOption {
+                  type = types.bool;
+                  default = false;
+                  description = "Enable multi-monitor capture (merges all selected monitors into a single virtual desktop).";
+                };
               };
             };
             default = { };
             description = "Screen capture settings.";
+          };
+
+          audio = mkOption {
+            type = types.submodule {
+              freeformType = settingsFormat.type;
+              options = {
+                enable = mkOption {
+                  type = types.bool;
+                  default = true;
+                  description = "Enable RDPSND audio forwarding from the desktop to the RDP client.";
+                };
+                sample_rate = mkOption {
+                  type = types.int;
+                  default = 44100;
+                  description = "Audio sample rate in Hz.";
+                };
+                channels = mkOption {
+                  type = types.int;
+                  default = 2;
+                  description = "Number of audio channels (1 = mono, 2 = stereo).";
+                };
+              };
+            };
+            default = { };
+            description = "Audio forwarding settings (RDPSND).";
           };
 
           encode = mkOption {

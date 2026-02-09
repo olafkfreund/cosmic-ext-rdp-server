@@ -36,6 +36,8 @@ ironrdp-server = { version = "0.10", features = ["helper"] }
 ironrdp-cliprdr = "0.5"
 ironrdp-core = "0.1"
 ironrdp-displaycontrol = "0.5"
+ironrdp-pdu = "0.7"
+ironrdp-rdpsnd = "0.7"
 
 # Async utilities
 async-trait = "0.1"

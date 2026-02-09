@@ -681,6 +681,8 @@ dependencies = [
  "ironrdp-cliprdr",
  "ironrdp-core",
  "ironrdp-displaycontrol",
+ "ironrdp-pdu",
+ "ironrdp-rdpsnd",
  "ironrdp-server",
  "rcgen",
  "rdp-capture",

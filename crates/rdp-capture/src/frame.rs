@@ -48,6 +48,74 @@ impl PixelFormat {
     }
 }
 
+/// Cursor bitmap data (RGBA pixels).
+#[derive(Debug, Clone)]
+pub struct CursorBitmap {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Hotspot X coordinate.
+    pub hot_x: u32,
+    /// Hotspot Y coordinate.
+    pub hot_y: u32,
+    /// RGBA pixel data (4 bytes per pixel, top-to-bottom row order).
+    pub data: Vec<u8>,
+}
+
+impl CursorBitmap {
+    /// Expected data length for the given dimensions.
+    #[must_use]
+    pub fn expected_len(width: u32, height: u32) -> usize {
+        (width as usize) * (height as usize) * 4
+    }
+
+    /// Validate that the bitmap data matches the declared dimensions.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.data.len() == Self::expected_len(self.width, self.height)
+    }
+}
+
+/// Cursor position and optional shape information.
+#[derive(Debug, Clone)]
+pub struct CursorInfo {
+    /// Cursor X position relative to the captured region.
+    pub x: i32,
+    /// Cursor Y position relative to the captured region.
+    pub y: i32,
+    /// Whether the cursor is visible.
+    pub visible: bool,
+    /// Cursor bitmap, if the shape changed since last update.
+    pub bitmap: Option<CursorBitmap>,
+}
+
+/// A chunk of captured audio data.
+#[derive(Debug, Clone)]
+pub struct AudioChunk {
+    /// Raw PCM audio data.
+    pub data: Vec<u8>,
+    /// Number of audio channels.
+    pub channels: u16,
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Bits per sample (e.g. 16).
+    pub bits_per_sample: u16,
+    /// Monotonically increasing sequence number.
+    pub sequence: u64,
+}
+
+/// Events produced by the capture pipeline.
+#[derive(Debug, Clone)]
+pub enum CaptureEvent {
+    /// A new video frame is available.
+    Frame(CapturedFrame),
+    /// Cursor position or shape changed (no new frame).
+    Cursor(CursorInfo),
+    /// A new video frame and cursor update arrived together.
+    FrameAndCursor(CapturedFrame, CursorInfo),
+}
+
 /// A single captured video frame.
 #[derive(Debug, Clone)]
 pub struct CapturedFrame {

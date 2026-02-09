@@ -5,11 +5,17 @@
 //! Use [`start_capture`] for a high-level API that handles portal negotiation
 //! and `PipeWire` stream setup.
 
+pub mod audio_stream;
+pub mod compositor;
 pub mod frame;
 pub mod pipewire_stream;
 pub mod portal;
 
-pub use frame::{CapturedFrame, DamageRect, PixelFormat};
+pub use audio_stream::{AudioCaptureError, PwAudioStream};
+pub use compositor::{bounding_box, FrameCompositor, MonitorInfo};
+pub use frame::{
+    AudioChunk, CaptureEvent, CapturedFrame, CursorBitmap, CursorInfo, DamageRect, PixelFormat,
+};
 pub use pipewire_stream::{PwError, PwStream};
 pub use portal::{start_screencast, PortalError, PortalSession, PortalStream};
 
@@ -51,8 +57,8 @@ pub struct CaptureHandle {
 pub async fn start_capture(
     restore_token: Option<&str>,
     channel_capacity: usize,
-) -> Result<(CaptureHandle, mpsc::Receiver<CapturedFrame>, DesktopInfo), CaptureError> {
-    let portal_session = start_screencast(restore_token)
+) -> Result<(CaptureHandle, mpsc::Receiver<CaptureEvent>, DesktopInfo), CaptureError> {
+    let portal_session = start_screencast(restore_token, true, false)
         .await
         .map_err(CaptureError::Portal)?;
 

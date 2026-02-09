@@ -5,10 +5,12 @@ use bytes::Bytes;
 use ironrdp_displaycontrol::pdu::DisplayControlMonitorLayout;
 use ironrdp_server::{
     BitmapUpdate, CliprdrServerFactory, DesktopSize, DisplayUpdate, KeyboardEvent, MouseEvent,
-    PixelFormat, RdpServer, RdpServerDisplay, RdpServerDisplayUpdates, RdpServerInputHandler,
+    PixelFormat, RGBAPointer, RdpServer, RdpServerDisplay, RdpServerDisplayUpdates,
+    RdpServerInputHandler, SoundServerFactory,
 };
+use ironrdp_pdu::pointer::PointerPositionAttribute;
 use enigo::{Button, Direction};
-use rdp_capture::{CapturedFrame, DesktopInfo};
+use rdp_capture::{CaptureEvent, CapturedFrame, CursorInfo, DesktopInfo};
 use rdp_input::EnigoInput;
 use tokio::sync::mpsc;
 
@@ -218,7 +220,7 @@ fn create_blue_bitmap(width: u16, height: u16) -> BitmapUpdate {
 pub struct LiveDisplay {
     width: u16,
     height: u16,
-    frame_rx: Option<mpsc::Receiver<CapturedFrame>>,
+    event_rx: Option<mpsc::Receiver<CaptureEvent>>,
     /// Sender half of the resize channel. When the RDP client requests a
     /// layout change, we send the new size here; the `LiveDisplayUpdates`
     /// picks it up and emits `DisplayUpdate::Resize`.
@@ -228,16 +230,16 @@ pub struct LiveDisplay {
 }
 
 impl LiveDisplay {
-    /// Create a live display from a capture frame receiver and desktop info.
+    /// Create a live display from a capture event receiver and desktop info.
     ///
     /// The caller must keep the [`rdp_capture::CaptureHandle`] alive for the
     /// duration of the display, otherwise frames will stop arriving.
-    pub fn new(frame_rx: mpsc::Receiver<CapturedFrame>, info: &DesktopInfo) -> Self {
+    pub fn new(event_rx: mpsc::Receiver<CaptureEvent>, info: &DesktopInfo) -> Self {
         let (resize_tx, resize_rx) = mpsc::channel(4);
         Self {
             width: info.width,
             height: info.height,
-            frame_rx: Some(frame_rx),
+            event_rx: Some(event_rx),
             resize_tx,
             resize_rx: Some(resize_rx),
         }
@@ -254,8 +256,8 @@ impl RdpServerDisplay for LiveDisplay {
     }
 
     async fn updates(&mut self) -> Result<Box<dyn RdpServerDisplayUpdates>> {
-        let frame_rx = self
-            .frame_rx
+        let event_rx = self
+            .event_rx
             .take()
             .ok_or_else(|| anyhow::anyhow!("capture already started (only one connection supported)"))?;
 
@@ -265,8 +267,9 @@ impl RdpServerDisplay for LiveDisplay {
             .ok_or_else(|| anyhow::anyhow!("resize channel already taken"))?;
 
         Ok(Box::new(LiveDisplayUpdates {
-            frame_rx,
+            event_rx,
             resize_rx,
+            pending_cursor: None,
         }))
     }
 
@@ -299,26 +302,46 @@ impl RdpServerDisplay for LiveDisplay {
 /// Display updates that receive live frames from the `PipeWire` capture
 /// and handle dynamic resize events from the RDP client.
 struct LiveDisplayUpdates {
-    frame_rx: mpsc::Receiver<CapturedFrame>,
+    event_rx: mpsc::Receiver<CaptureEvent>,
     resize_rx: mpsc::Receiver<DesktopSize>,
+    /// When a `FrameAndCursor` event arrives, we return the frame first
+    /// and buffer the cursor update for the next call.
+    pending_cursor: Option<CursorInfo>,
 }
 
 #[async_trait::async_trait]
 impl RdpServerDisplayUpdates for LiveDisplayUpdates {
     async fn next_update(&mut self) -> Result<Option<DisplayUpdate>> {
-        // Both branches are cancellation-safe (mpsc::Receiver::recv)
+        // If we have a buffered cursor update from a previous FrameAndCursor,
+        // return it immediately before reading more events.
+        if let Some(cursor) = self.pending_cursor.take() {
+            return Ok(Some(cursor_to_display_update(&cursor)));
+        }
+
+        // All branches are cancellation-safe (mpsc::Receiver::recv)
         tokio::select! {
-            frame = self.frame_rx.recv() => {
-                let Some(mut frame) = frame else {
+            event = self.event_rx.recv() => {
+                let Some(event) = event else {
                     return Ok(None);
                 };
 
-                // PipeWire delivers BGRx where the alpha byte is undefined.
-                // Set alpha to 0xFF for correct rendering.
-                frame.ensure_alpha_opaque();
-
-                let bitmap = frame_to_bitmap(frame)?;
-                Ok(Some(DisplayUpdate::Bitmap(bitmap)))
+                match event {
+                    CaptureEvent::Frame(mut frame) => {
+                        frame.ensure_alpha_opaque();
+                        let bitmap = frame_to_bitmap(frame)?;
+                        Ok(Some(DisplayUpdate::Bitmap(bitmap)))
+                    }
+                    CaptureEvent::Cursor(cursor) => {
+                        Ok(Some(cursor_to_display_update(&cursor)))
+                    }
+                    CaptureEvent::FrameAndCursor(mut frame, cursor) => {
+                        // Return the frame now, buffer cursor for next call.
+                        self.pending_cursor = Some(cursor);
+                        frame.ensure_alpha_opaque();
+                        let bitmap = frame_to_bitmap(frame)?;
+                        Ok(Some(DisplayUpdate::Bitmap(bitmap)))
+                    }
+                }
             }
             size = self.resize_rx.recv() => {
                 let Some(new_size) = size else {
@@ -334,6 +357,30 @@ impl RdpServerDisplayUpdates for LiveDisplayUpdates {
                 Ok(Some(DisplayUpdate::Resize(new_size)))
             }
         }
+    }
+}
+
+/// Convert a [`CursorInfo`] to the appropriate [`DisplayUpdate`] variant.
+fn cursor_to_display_update(cursor: &CursorInfo) -> DisplayUpdate {
+    if !cursor.visible {
+        return DisplayUpdate::HidePointer;
+    }
+
+    if let Some(ref bitmap) = cursor.bitmap {
+        #[allow(clippy::cast_possible_truncation)]
+        DisplayUpdate::RGBAPointer(RGBAPointer {
+            width: bitmap.width as u16,
+            height: bitmap.height as u16,
+            hot_x: bitmap.hot_x as u16,
+            hot_y: bitmap.hot_y as u16,
+            data: bitmap.data.clone(),
+        })
+    } else {
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        DisplayUpdate::PointerPosition(PointerPositionAttribute {
+            x: cursor.x.max(0) as u16,
+            y: cursor.y.max(0) as u16,
+        })
     }
 }
 
@@ -396,6 +443,7 @@ pub fn build_server(
     tls: &TlsContext,
     auth: Option<&AuthCredentials>,
     cliprdr: Option<Box<dyn CliprdrServerFactory>>,
+    sound: Option<Box<dyn SoundServerFactory>>,
 ) -> RdpServer {
     let builder = RdpServer::builder().with_addr(bind_addr);
     let builder = with_security!(builder, tls, auth);
@@ -403,6 +451,7 @@ pub fn build_server(
         .with_input_handler(StaticInputHandler)
         .with_display_handler(StaticDisplay::default())
         .with_cliprdr_factory(cliprdr)
+        .with_sound_factory(sound)
         .build();
     apply_credentials(&mut server, auth);
     server
@@ -416,6 +465,7 @@ pub fn build_live_server(
     display: LiveDisplay,
     input_handler: LiveInputHandler,
     cliprdr: Option<Box<dyn CliprdrServerFactory>>,
+    sound: Option<Box<dyn SoundServerFactory>>,
 ) -> RdpServer {
     let builder = RdpServer::builder().with_addr(bind_addr);
     let builder = with_security!(builder, tls, auth);
@@ -423,6 +473,7 @@ pub fn build_live_server(
         .with_input_handler(input_handler)
         .with_display_handler(display)
         .with_cliprdr_factory(cliprdr)
+        .with_sound_factory(sound)
         .build();
     apply_credentials(&mut server, auth);
     server
@@ -435,6 +486,7 @@ pub fn build_view_only_server(
     auth: Option<&AuthCredentials>,
     display: LiveDisplay,
     cliprdr: Option<Box<dyn CliprdrServerFactory>>,
+    sound: Option<Box<dyn SoundServerFactory>>,
 ) -> RdpServer {
     let builder = RdpServer::builder().with_addr(bind_addr);
     let builder = with_security!(builder, tls, auth);
@@ -442,6 +494,7 @@ pub fn build_view_only_server(
         .with_input_handler(StaticInputHandler)
         .with_display_handler(display)
         .with_cliprdr_factory(cliprdr)
+        .with_sound_factory(sound)
         .build();
     apply_credentials(&mut server, auth);
     server

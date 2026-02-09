@@ -37,6 +37,11 @@
 # Higher values add latency but reduce dropped frames.
 # channel_capacity = 4
 
+# Enable multi-monitor capture. When true, all selected monitors are
+# merged into a single virtual desktop. When false (default), only
+# the primary monitor is captured.
+# multi_monitor = false
+
 # --- Video Encoding ---
 # Note: H.264/EGFX delivery is prepared but blocked on upstream
 # ironrdp-server support. These settings will apply once EGFX lands.
@@ -50,6 +55,18 @@
 
 # Target bitrate in bits per second.
 # bitrate = 10000000
+
+# --- Audio Forwarding ---
+# Forward desktop audio to the RDP client via the RDPSND virtual channel.
+# Captures from the default PipeWire audio sink monitor.
+[audio]
+# enable = true
+
+# Audio sample rate in Hz.
+# sample_rate = 44100
+
+# Number of audio channels (1 = mono, 2 = stereo).
+# channels = 2
 
 # --- Clipboard ---
 # Share clipboard content between the local desktop and the remote

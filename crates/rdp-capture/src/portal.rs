@@ -43,11 +43,20 @@ pub struct PortalSession {
 ///
 /// This will show the system permission dialog if no valid restore token is provided.
 ///
+/// When `cursor_metadata` is true, the portal requests `CursorMode::Metadata`
+/// so that cursor shape data arrives as SPA metadata. Falls back to
+/// `CursorMode::Embedded` if metadata mode is not supported.
+///
+/// When `multiple` is true, the portal allows the user to select multiple
+/// monitor sources for multi-monitor capture.
+///
 /// # Errors
 ///
 /// Returns `PortalError` if the portal session cannot be created or started.
 pub async fn start_screencast(
     restore_token: Option<&str>,
+    cursor_metadata: bool,
+    multiple: bool,
 ) -> Result<PortalSession, PortalError> {
     let proxy = Screencast::new().await.map_err(PortalError::Create)?;
 
@@ -56,12 +65,29 @@ pub async fn start_screencast(
         .await
         .map_err(PortalError::Session)?;
 
+    // Try metadata cursor mode if requested, fall back to embedded.
+    let cursor_mode = if cursor_metadata {
+        let available = proxy
+            .available_cursor_modes()
+            .await
+            .unwrap_or_else(|_| CursorMode::Embedded.into());
+        if available.contains(CursorMode::Metadata) {
+            tracing::info!("Using CursorMode::Metadata for cursor shape forwarding");
+            CursorMode::Metadata
+        } else {
+            tracing::info!("CursorMode::Metadata not supported, using Embedded");
+            CursorMode::Embedded
+        }
+    } else {
+        CursorMode::Embedded
+    };
+
     proxy
         .select_sources(
             &session,
-            CursorMode::Embedded,
+            cursor_mode,
             SourceType::Monitor.into(),
-            false,
+            multiple,
             restore_token,
             PersistMode::ExplicitlyRevoked,
         )

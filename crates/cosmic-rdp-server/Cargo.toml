@@ -26,6 +26,8 @@ ironrdp-server.workspace = true
 ironrdp-cliprdr.workspace = true
 ironrdp-core.workspace = true
 ironrdp-displaycontrol.workspace = true
+ironrdp-pdu.workspace = true
+ironrdp-rdpsnd.workspace = true
 
 # Clipboard
 arboard.workspace = true

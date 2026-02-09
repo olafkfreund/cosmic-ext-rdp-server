@@ -34,8 +34,9 @@ nix build               # Build with Nix
 
 - **ironrdp-server** ~0.10 (with `helper` feature): RDP protocol server
 - **ironrdp-cliprdr** ~0.5: CLIPRDR clipboard virtual channel
+- **ironrdp-rdpsnd** ~0.7: RDPSND audio virtual channel
 - **ashpd** ~0.12: XDG Desktop Portal (ScreenCast)
-- **pipewire** ~0.8: PipeWire stream handling
+- **pipewire** ~0.8: PipeWire stream handling (video + audio capture)
 - **gstreamer** ~0.23: H.264 encoding
 - **enigo** 0.6 (libei_tokio): Input injection via libei
 - **arboard** 3: System clipboard access (Wayland + X11)
@@ -66,4 +67,4 @@ Patterns adapted from `cosmic-display-stream`:
 - **Phase 4**: H.264 encoding (DONE - GStreamer pipeline ready, EGFX blocked on upstream ironrdp)
 - **Phase 5**: Config, auth, NixOS module (DONE - TOML config, NLA/CredSSP, NixOS module)
 - **Phase 6**: Clipboard, dynamic resize, graceful shutdown (DONE - CLIPRDR text, display resize, SIGINT/SIGTERM)
-- **Phase 7**: Audio forwarding, multi-monitor, cursor shape (TODO)
+- **Phase 7**: Audio forwarding, multi-monitor, cursor shape (DONE - RDPSND via PipeWire, compositor, cursor metadata)

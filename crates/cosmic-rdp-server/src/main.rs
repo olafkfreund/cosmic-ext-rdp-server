@@ -6,6 +6,7 @@ use clap::Parser;
 mod clipboard;
 mod config;
 mod server;
+mod sound;
 mod tls;
 
 /// RDP server for the COSMIC Desktop Environment.
@@ -66,16 +67,32 @@ async fn main() -> Result<()> {
         }
     };
 
+    let make_sound = || -> Option<Box<dyn ironrdp_server::SoundServerFactory>> {
+        if cfg.audio.enable {
+            tracing::info!(
+                channels = cfg.audio.channels,
+                sample_rate = cfg.audio.sample_rate,
+                "Audio forwarding enabled (RDPSND)"
+            );
+            Some(Box::new(sound::PipeWireAudioFactory::new(
+                cfg.audio.channels,
+                cfg.audio.sample_rate,
+            )))
+        } else {
+            None
+        }
+    };
+
     tracing::info!(bind = %cfg.bind, "Starting cosmic-rdp-server");
 
     if cfg.static_display {
         tracing::info!("Using static blue screen display");
         let rdp_server =
-            server::build_server(cfg.bind, &tls_ctx, auth.as_ref(), make_cliprdr());
+            server::build_server(cfg.bind, &tls_ctx, auth.as_ref(), make_cliprdr(), make_sound());
         return run_with_shutdown(rdp_server).await;
     }
 
-    run_live_or_fallback(&cfg, &tls_ctx, auth.as_ref(), &make_cliprdr).await
+    run_live_or_fallback(&cfg, &tls_ctx, auth.as_ref(), &make_cliprdr, &make_sound).await
 }
 
 /// Load config from file and apply CLI overrides.
@@ -140,9 +157,10 @@ async fn run_live_or_fallback(
     tls_ctx: &tls::TlsContext,
     auth: Option<&server::AuthCredentials>,
     make_cliprdr: &dyn Fn() -> Option<Box<dyn ironrdp_server::CliprdrServerFactory>>,
+    make_sound: &dyn Fn() -> Option<Box<dyn ironrdp_server::SoundServerFactory>>,
 ) -> Result<()> {
     match rdp_capture::start_capture(None, cfg.capture.channel_capacity).await {
-        Ok((capture_handle, frame_rx, desktop_info)) => {
+        Ok((capture_handle, event_rx, desktop_info)) => {
             tracing::info!(
                 width = desktop_info.width,
                 height = desktop_info.height,
@@ -150,7 +168,7 @@ async fn run_live_or_fallback(
                 "Live screen capture active"
             );
 
-            let live_display = server::LiveDisplay::new(frame_rx, &desktop_info);
+            let live_display = server::LiveDisplay::new(event_rx, &desktop_info);
 
             let input_handler = match rdp_input::EnigoInput::new() {
                 Ok(enigo) => {
@@ -161,7 +179,7 @@ async fn run_live_or_fallback(
                     tracing::warn!("Failed to initialize input injection: {e}");
                     tracing::warn!("Input events will be logged but not injected");
                     let rdp_server = server::build_view_only_server(
-                        cfg.bind, tls_ctx, auth, live_display, make_cliprdr(),
+                        cfg.bind, tls_ctx, auth, live_display, make_cliprdr(), make_sound(),
                     );
                     let _capture = capture_handle;
                     return run_with_shutdown(rdp_server).await;
@@ -169,7 +187,7 @@ async fn run_live_or_fallback(
             };
 
             let rdp_server = server::build_live_server(
-                cfg.bind, tls_ctx, auth, live_display, input_handler, make_cliprdr(),
+                cfg.bind, tls_ctx, auth, live_display, input_handler, make_cliprdr(), make_sound(),
             );
             let _capture = capture_handle;
             run_with_shutdown(rdp_server).await
@@ -177,7 +195,8 @@ async fn run_live_or_fallback(
         Err(e) => {
             tracing::warn!("Failed to start screen capture: {e:#}");
             tracing::info!("Falling back to static blue screen display");
-            let rdp_server = server::build_server(cfg.bind, tls_ctx, auth, make_cliprdr());
+            let rdp_server =
+                server::build_server(cfg.bind, tls_ctx, auth, make_cliprdr(), make_sound());
             run_with_shutdown(rdp_server).await
         }
     }
