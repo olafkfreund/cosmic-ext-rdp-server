@@ -27,9 +27,26 @@ impl EnigoInput {
     ///
     /// Returns [`InputError::Init`] if enigo cannot connect to the compositor.
     pub fn new() -> Result<Self, InputError> {
-        let enigo = Enigo::new(&Settings::default()).map_err(|e| {
-            InputError::Init(format!("{e}"))
-        })?;
+        // enigo 0.6.1 panics (unwrap) when the RemoteDesktop portal is
+        // missing instead of returning an Err.  Catch the panic so we can
+        // fall back to view-only mode gracefully.
+        let result = std::panic::catch_unwind(|| {
+            Enigo::new(&Settings::default())
+        });
+
+        let enigo = match result {
+            Ok(Ok(enigo)) => enigo,
+            Ok(Err(e)) => return Err(InputError::Init(format!("{e}"))),
+            Err(panic) => {
+                let msg = panic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                return Err(InputError::Init(format!("enigo panicked: {msg}")));
+            }
+        };
+
         Ok(Self { enigo })
     }
 
