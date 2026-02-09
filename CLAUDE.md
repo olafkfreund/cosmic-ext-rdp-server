@@ -33,10 +33,12 @@ nix build               # Build with Nix
 ## Key Dependencies
 
 - **ironrdp-server** ~0.10 (with `helper` feature): RDP protocol server
+- **ironrdp-cliprdr** ~0.5: CLIPRDR clipboard virtual channel
 - **ashpd** ~0.12: XDG Desktop Portal (ScreenCast)
 - **pipewire** ~0.8: PipeWire stream handling
 - **gstreamer** ~0.23: H.264 encoding
 - **enigo** 0.6 (libei_tokio): Input injection via libei
+- **arboard** 3: System clipboard access (Wayland + X11)
 - **tokio-rustls** + **rcgen**: TLS + self-signed certificates
 
 ## Code Style
@@ -59,8 +61,9 @@ Patterns adapted from `cosmic-display-stream`:
 
 - **Phase 0**: Project scaffolding (DONE)
 - **Phase 1**: Static blue screen MVP (DONE - ironrdp-server integration, TLS, static display)
-- **Phase 2**: Live screen capture (ScreenCast portal + PipeWire)
-- **Phase 3**: Input injection (keyboard + mouse via libei)
-- **Phase 4**: H.264 encoding (GStreamer EGFX pipeline)
-- **Phase 5**: Config, auth, NixOS module
-- **Phase 6**: Clipboard, multi-monitor, audio, polish
+- **Phase 2**: Live screen capture (DONE - ScreenCast portal + PipeWire)
+- **Phase 3**: Input injection (DONE - keyboard + mouse via libei/enigo)
+- **Phase 4**: H.264 encoding (DONE - GStreamer pipeline ready, EGFX blocked on upstream ironrdp)
+- **Phase 5**: Config, auth, NixOS module (DONE - TOML config, NLA/CredSSP, NixOS module)
+- **Phase 6**: Clipboard, dynamic resize, graceful shutdown (DONE - CLIPRDR text, display resize, SIGINT/SIGTERM)
+- **Phase 7**: Audio forwarding, multi-monitor, cursor shape (TODO)
