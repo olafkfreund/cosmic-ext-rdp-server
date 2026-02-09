@@ -14,7 +14,7 @@ Standalone daemon (direct Wayland client) with 6 crates:
 | `cosmic-rdp-settings` | COSMIC settings GUI: config editor, D-Bus status, nav pages |
 | `rdp-dbus` | Shared D-Bus types, config structs, client proxy |
 | `rdp-capture` | Screen capture via ScreenCast portal + PipeWire |
-| `rdp-input` | Input injection via enigo/libei |
+| `rdp-input` | Input injection via reis/libei |
 | `rdp-encode` | Video encoding via GStreamer (H.264) + bitmap fallback |
 
 ## Build Commands
@@ -46,7 +46,7 @@ nix build .#cosmic-rdp-settings  # Build settings GUI with Nix
 - **ashpd** ~0.12: XDG Desktop Portal (ScreenCast)
 - **pipewire** ~0.8: PipeWire stream handling (video + audio capture)
 - **gstreamer** ~0.23: H.264 encoding
-- **enigo** 0.6 (libei_tokio): Input injection via libei
+- **reis** 0.5 (tokio): Direct libei protocol for input injection
 - **arboard** 3: System clipboard access (Wayland + X11)
 - **tokio-rustls** + **rcgen**: TLS + self-signed certificates
 - **zbus** 5: D-Bus IPC between daemon and settings GUI
@@ -66,14 +66,14 @@ Patterns adapted from `cosmic-display-stream`:
 - Screen capture: `capture.rs` (portal sessions, VideoFrame type)
 - PipeWire: `pipewire.rs` (dedicated thread, SHM/DMA-BUF)
 - Encoding: `encoder.rs` (GStreamer pipeline, hardware detection)
-- Input: `input.rs` (enigo/libei lazy init, coordinate mapping)
+- Input: `input.rs` (reis/libei direct protocol, coordinate mapping)
 
 ## Implementation Phases
 
 - **Phase 0**: Project scaffolding (DONE)
 - **Phase 1**: Static blue screen MVP (DONE - ironrdp-server integration, TLS, static display)
 - **Phase 2**: Live screen capture (DONE - ScreenCast portal + PipeWire)
-- **Phase 3**: Input injection (DONE - keyboard + mouse via libei/enigo)
+- **Phase 3**: Input injection (DONE - keyboard + mouse via reis/libei)
 - **Phase 4**: H.264 encoding (DONE - GStreamer pipeline ready, EGFX blocked on upstream ironrdp)
 - **Phase 5**: Config, auth, NixOS module (DONE - TOML config, NLA/CredSSP, NixOS module)
 - **Phase 6**: Clipboard, dynamic resize, graceful shutdown (DONE - CLIPRDR text, display resize, SIGINT/SIGTERM)

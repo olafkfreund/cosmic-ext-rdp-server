@@ -3,7 +3,7 @@
 //! Uses the `reis` crate to speak the libei protocol directly,
 //! connecting via the `RemoteDesktop` XDG portal (`ashpd`).
 //! This avoids the X11 fallback logic and panic-prone initialization
-//! path in the `enigo` crate.
+//! path that the `enigo` crate previously used.
 
 use std::collections::HashMap;
 use std::os::unix::net::UnixStream;

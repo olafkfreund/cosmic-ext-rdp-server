@@ -2,7 +2,7 @@
 //!
 //! RDP sends XT Set 1 scancodes (8-bit) with an `extended` flag for keys
 //! that use the 0xE0 prefix in the PS/2 protocol. This module converts
-//! them to Linux evdev keycodes for injection via libei/enigo.
+//! them to Linux evdev keycodes for injection via reis/libei.
 
 /// Convert an RDP XT scancode to a Linux evdev keycode.
 ///
