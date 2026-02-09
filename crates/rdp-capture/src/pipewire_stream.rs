@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use pipewire as pw;
 use pw::properties::properties;
+use pw::spa::pod::serialize::PodSerializer;
+use pw::spa::pod::Pod;
 use pw::stream::{Stream, StreamFlags, StreamState};
 use tokio::sync::mpsc;
 
@@ -111,12 +113,18 @@ fn run_pipewire_loop(
         .register()
         .map_err(|_| PwError::RegisterListener)?;
 
+    // Request BGRx/BGRA SHM format explicitly. Without format params,
+    // PipeWire may negotiate DMA-BUF which yields black frames when
+    // MAP_BUFFERS maps GPU memory that hasn't been synced to CPU.
+    let format_pod = build_video_format_pod();
+    let mut params = [Pod::from_bytes(&format_pod).expect("valid format pod")];
+
     stream
         .connect(
             pw::spa::utils::Direction::Input,
             Some(node_id),
             StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS,
-            &mut [],
+            &mut params,
         )
         .map_err(|_| PwError::StreamConnect)?;
 
@@ -128,6 +136,63 @@ fn run_pipewire_loop(
 
     tracing::info!("PipeWire main loop exiting");
     Ok(())
+}
+
+/// Build a SPA format pod requesting BGRx/BGRA raw video in SHM.
+///
+/// This tells `PipeWire` to prefer shared-memory buffers with CPU-readable
+/// pixel data instead of DMA-BUF handles that may yield black frames.
+fn build_video_format_pod() -> Vec<u8> {
+    let obj = pw::spa::pod::object!(
+        pw::spa::utils::SpaTypes::ObjectParamFormat,
+        pw::spa::param::ParamType::EnumFormat,
+        pw::spa::pod::property!(
+            pw::spa::param::format::FormatProperties::MediaType,
+            Id,
+            pw::spa::param::format::MediaType::Video
+        ),
+        pw::spa::pod::property!(
+            pw::spa::param::format::FormatProperties::MediaSubtype,
+            Id,
+            pw::spa::param::format::MediaSubtype::Raw
+        ),
+        pw::spa::pod::property!(
+            pw::spa::param::format::FormatProperties::VideoFormat,
+            Choice,
+            Enum,
+            Id,
+            pw::spa::param::video::VideoFormat::BGRx,
+            pw::spa::param::video::VideoFormat::BGRA,
+            pw::spa::param::video::VideoFormat::RGBx,
+            pw::spa::param::video::VideoFormat::RGBA
+        ),
+        pw::spa::pod::property!(
+            pw::spa::param::format::FormatProperties::VideoSize,
+            Choice,
+            Range,
+            Rectangle,
+            pw::spa::utils::Rectangle { width: 1920, height: 1080 },
+            pw::spa::utils::Rectangle { width: 1, height: 1 },
+            pw::spa::utils::Rectangle { width: 8192, height: 8192 }
+        ),
+        pw::spa::pod::property!(
+            pw::spa::param::format::FormatProperties::VideoFramerate,
+            Choice,
+            Range,
+            Fraction,
+            pw::spa::utils::Fraction { num: 30, denom: 1 },
+            pw::spa::utils::Fraction { num: 1, denom: 1 },
+            pw::spa::utils::Fraction { num: 120, denom: 1 }
+        ),
+    );
+
+    PodSerializer::serialize(
+        std::io::Cursor::new(Vec::new()),
+        &pw::spa::pod::Value::Object(obj),
+    )
+    .expect("format pod serialization")
+    .0
+    .into_inner()
 }
 
 /// Process a single frame from the `PipeWire` stream.
