@@ -6,6 +6,7 @@ use ironrdp_server::{
     BitmapUpdate, DesktopSize, DisplayUpdate, KeyboardEvent, MouseEvent, PixelFormat, RdpServer,
     RdpServerDisplay, RdpServerDisplayUpdates, RdpServerInputHandler,
 };
+use rdp_capture::{CapturedFrame, DesktopInfo};
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 
@@ -27,6 +28,8 @@ impl RdpServerInputHandler for StaticInputHandler {
         tracing::trace!(?event, "Mouse event received");
     }
 }
+
+// --------------- Static Display (Phase 1 blue screen) ---------------
 
 /// Display updates that send a single blue bitmap then wait forever.
 struct StaticDisplayUpdates {
@@ -113,12 +116,117 @@ fn create_blue_bitmap(width: u16, height: u16) -> BitmapUpdate {
     }
 }
 
-/// Build and return the RDP server, ready to accept connections.
+// --------------- Live Display (Phase 2 screen capture) ---------------
+
+/// Display that streams live screen capture frames via `PipeWire`.
+pub struct LiveDisplay {
+    width: u16,
+    height: u16,
+    frame_rx: Option<mpsc::Receiver<CapturedFrame>>,
+}
+
+impl LiveDisplay {
+    /// Create a live display from a capture frame receiver and desktop info.
+    ///
+    /// The caller must keep the [`rdp_capture::CaptureHandle`] alive for the
+    /// duration of the display, otherwise frames will stop arriving.
+    pub fn new(frame_rx: mpsc::Receiver<CapturedFrame>, info: &DesktopInfo) -> Self {
+        Self {
+            width: info.width,
+            height: info.height,
+            frame_rx: Some(frame_rx),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RdpServerDisplay for LiveDisplay {
+    async fn size(&mut self) -> DesktopSize {
+        DesktopSize {
+            width: self.width,
+            height: self.height,
+        }
+    }
+
+    async fn updates(&mut self) -> Result<Box<dyn RdpServerDisplayUpdates>> {
+        let frame_rx = self
+            .frame_rx
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("capture already started (only one connection supported)"))?;
+
+        Ok(Box::new(LiveDisplayUpdates { frame_rx }))
+    }
+}
+
+/// Display updates that receive live frames from the `PipeWire` capture.
+struct LiveDisplayUpdates {
+    frame_rx: mpsc::Receiver<CapturedFrame>,
+}
+
+#[async_trait::async_trait]
+impl RdpServerDisplayUpdates for LiveDisplayUpdates {
+    async fn next_update(&mut self) -> Result<Option<DisplayUpdate>> {
+        // Cancellation-safe: mpsc::Receiver::recv() is cancel-safe
+        let Some(mut frame) = self.frame_rx.recv().await else {
+            return Ok(None);
+        };
+
+        // PipeWire delivers BGRx where the alpha byte is undefined.
+        // Set alpha to 0xFF for correct rendering.
+        frame.ensure_alpha_opaque();
+
+        let bitmap = frame_to_bitmap(frame)?;
+        Ok(Some(DisplayUpdate::Bitmap(bitmap)))
+    }
+}
+
+/// Convert a captured frame to an ironrdp `BitmapUpdate`.
+fn frame_to_bitmap(frame: CapturedFrame) -> Result<BitmapUpdate> {
+    let width = u16::try_from(frame.width)
+        .map_err(|_| anyhow::anyhow!("frame width {} exceeds u16", frame.width))?;
+    let height = u16::try_from(frame.height)
+        .map_err(|_| anyhow::anyhow!("frame height {} exceeds u16", frame.height))?;
+
+    let width =
+        NonZeroU16::new(width).ok_or_else(|| anyhow::anyhow!("frame width is zero"))?;
+    let height =
+        NonZeroU16::new(height).ok_or_else(|| anyhow::anyhow!("frame height is zero"))?;
+    let stride = NonZeroUsize::new(frame.stride as usize)
+        .ok_or_else(|| anyhow::anyhow!("frame stride is zero"))?;
+
+    Ok(BitmapUpdate {
+        x: 0,
+        y: 0,
+        width,
+        height,
+        format: PixelFormat::BgrA32,
+        data: Bytes::from(frame.data),
+        stride,
+    })
+}
+
+// --------------- Server Builders ---------------
+
+/// Build an RDP server with the static blue screen display (fallback).
 pub fn build_server(bind_addr: std::net::SocketAddr, tls_acceptor: TlsAcceptor) -> RdpServer {
     RdpServer::builder()
         .with_addr(bind_addr)
         .with_tls(tls_acceptor)
         .with_input_handler(StaticInputHandler)
         .with_display_handler(StaticDisplay::default())
+        .build()
+}
+
+/// Build an RDP server with live screen capture display.
+pub fn build_live_server(
+    bind_addr: std::net::SocketAddr,
+    tls_acceptor: TlsAcceptor,
+    display: LiveDisplay,
+) -> RdpServer {
+    RdpServer::builder()
+        .with_addr(bind_addr)
+        .with_tls(tls_acceptor)
+        .with_input_handler(StaticInputHandler)
+        .with_display_handler(display)
         .build()
 }

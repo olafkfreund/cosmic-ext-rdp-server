@@ -11,7 +11,7 @@ mod tls;
 /// RDP server for the COSMIC Desktop Environment.
 ///
 /// Allows remote access to COSMIC desktops using standard RDP clients
-/// (Windows mstsc.exe, `FreeRDP`, Remmina).
+/// (Windows `mstsc.exe`, `FreeRDP`, Remmina).
 #[derive(Parser, Debug)]
 #[command(name = "cosmic-rdp-server", version, about)]
 struct Cli {
@@ -36,6 +36,10 @@ struct Cli {
     /// Path to configuration file
     #[arg(long, short)]
     config: Option<PathBuf>,
+
+    /// Use a static blue screen instead of live capture (for testing)
+    #[arg(long)]
+    static_display: bool,
 }
 
 #[tokio::main]
@@ -63,8 +67,39 @@ async fn main() -> Result<()> {
 
     tracing::info!(%bind_addr, "Starting cosmic-rdp-server");
 
-    let mut rdp_server = server::build_server(bind_addr, tls_acceptor);
-    rdp_server.run().await.context("RDP server error")?;
+    if cli.static_display {
+        tracing::info!("Using static blue screen display");
+        let mut rdp_server = server::build_server(bind_addr, tls_acceptor);
+        rdp_server.run().await.context("RDP server error")?;
+        return Ok(());
+    }
+
+    // Try to start live screen capture via ScreenCast portal + PipeWire
+    match rdp_capture::start_capture(None, 4).await {
+        Ok((capture_handle, frame_rx, desktop_info)) => {
+            tracing::info!(
+                width = desktop_info.width,
+                height = desktop_info.height,
+                node_id = desktop_info.node_id,
+                "Live screen capture active"
+            );
+
+            let live_display = server::LiveDisplay::new(frame_rx, &desktop_info);
+            let mut rdp_server =
+                server::build_live_server(bind_addr, tls_acceptor, live_display);
+
+            // Keep capture handle alive for the duration of the server
+            let _capture = capture_handle;
+            rdp_server.run().await.context("RDP server error")?;
+        }
+        Err(e) => {
+            tracing::warn!("Failed to start screen capture: {e:#}");
+            tracing::info!("Falling back to static blue screen display");
+
+            let mut rdp_server = server::build_server(bind_addr, tls_acceptor);
+            rdp_server.run().await.context("RDP server error")?;
+        }
+    }
 
     Ok(())
 }
