@@ -15,7 +15,7 @@ Part of the [COSMIC Remote Desktop stack](#full-remote-desktop-stack) - works to
 - **Lock key synchronization** (Caps Lock, Num Lock, Scroll Lock state sync)
 - **NLA authentication** via CredSSP (optional)
 - **TLS encryption** with self-signed certificates or user-provided PEM files
-- **H.264 encoding** pipeline ready (GStreamer with VAAPI/NVENC/software fallback; awaiting upstream EGFX support in ironrdp-server)
+- **H.264 streaming** via EGFX/AVC420 Dynamic Virtual Channel (10-50x bandwidth reduction vs raw bitmap, with automatic bitmap fallback for clients without EGFX support)
 - **COSMIC Settings GUI** for configuration management via D-Bus IPC
 - **NixOS module** with systemd service, firewall integration, and secrets management
 - **Home Manager module** for user-level installation
@@ -45,7 +45,7 @@ RDP Client
     v
 cosmic-rdp-server (this repo)
     |
-    |-- ScreenCast portal --> PipeWire --> rdp-capture --> rdp-encode --> RDP bitmap/video
+    |-- ScreenCast portal --> PipeWire --> rdp-capture --> rdp-encode --> EGFX H.264 or bitmap
     |-- RemoteDesktop portal --> EIS socket --> rdp-input --> compositor keyboard/mouse
     |-- CLIPRDR channel <--> arboard --> system clipboard
     |-- RDPSND channel <-- PipeWire audio monitor
@@ -736,7 +736,7 @@ RUST_LOG=rdp_capture=trace,rdp_input=debug cosmic-rdp-server
 ## Known Limitations
 
 - **Single client:** Only one RDP client can connect at a time
-- **H.264 delivery:** The GStreamer H.264 encoder is ready but EGFX frame delivery is blocked on upstream support in ironrdp-server (bitmap fallback is used)
+- **Dynamic resize:** Resize during an active EGFX session may trigger a reconnection loop; bitmap-mode resize works correctly
 - **Cursor shapes:** SPA cursor metadata extraction requires unsafe FFI not yet implemented; cursor position is forwarded but custom cursor bitmaps from PipeWire are stubbed
 - **Unicode input:** Unicode key events (IME) are not yet supported
 

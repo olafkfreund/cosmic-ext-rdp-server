@@ -74,7 +74,7 @@ Patterns adapted from `cosmic-display-stream`:
 - **Phase 1**: Static blue screen MVP (DONE - ironrdp-server integration, TLS, static display)
 - **Phase 2**: Live screen capture (DONE - ScreenCast portal + PipeWire)
 - **Phase 3**: Input injection (DONE - keyboard + mouse via reis/libei)
-- **Phase 4**: H.264 encoding (DONE - GStreamer pipeline ready, EGFX blocked on upstream ironrdp)
+- **Phase 4**: H.264 encoding (DONE - GStreamer pipeline + EGFX/AVC420 DVC delivery via ironrdp-egfx fork)
 - **Phase 5**: Config, auth, NixOS module (DONE - TOML config, NLA/CredSSP, NixOS module)
 - **Phase 6**: Clipboard, dynamic resize, graceful shutdown (DONE - CLIPRDR text, display resize, SIGINT/SIGTERM)
 - **Phase 7**: Audio forwarding, multi-monitor, cursor shape (DONE - RDPSND via PipeWire, compositor, cursor metadata)
