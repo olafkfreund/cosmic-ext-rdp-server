@@ -244,13 +244,13 @@ in
         RestrictSUIDSGID = true;
         RestrictNamespaces = true;
         LockPersonality = true;
-        MemoryDenyWriteExecute = true;
-        RestrictRealtime = true;
-        SystemCallArchitectures = "native";
-        # Note: ~@privileged and ~@resources are intentionally omitted.
-        # The sspi/CredSSP library needs syscalls from these groups
-        # (e.g. fchown) during NLA authentication handshakes.
-        SystemCallFilter = [ "@system-service" ];
+        # Note: MemoryDenyWriteExecute, RestrictRealtime, and SystemCallFilter
+        # are intentionally omitted. PipeWire's RT module needs realtime
+        # scheduling (sched_setscheduler), and the sspi/CredSSP library needs
+        # syscalls from @privileged/@resources groups. These are incompatible
+        # with strict syscall filtering. The remaining hardening options
+        # (NoNewPrivileges, ProtectSystem=strict, etc.) provide adequate
+        # protection for a user service.
       };
     };
 
