@@ -27,12 +27,12 @@ let
 
     if [ -n "''${CREDENTIALS_DIRECTORY:-}" ] && [ -f "$CREDENTIALS_DIRECTORY/rdp-password" ]; then
       RUNTIME_CONFIG="''${RUNTIME_DIRECTORY}/config.toml"
-      ${pkgs.coreutils}/bin/install -m 0600 "$CONFIG" "$RUNTIME_CONFIG"
       PASSWORD=$(${pkgs.coreutils}/bin/cat "$CREDENTIALS_DIRECTORY/rdp-password")
       # Escape backslashes and double quotes for safe TOML string embedding
       PASSWORD=$(printf '%s' "$PASSWORD" | ${pkgs.gnused}/bin/sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
-      # Insert password into existing [auth] section (not a duplicate header)
-      ${pkgs.gnused}/bin/sed -i "/^\[auth\]/a password = \"$PASSWORD\"" "$RUNTIME_CONFIG"
+      # Use piped sed (not sed -i) to avoid rename/unlink syscalls blocked by SystemCallFilter
+      ${pkgs.gnused}/bin/sed "/^\[auth\]/a password = \"$PASSWORD\"" "$CONFIG" > "$RUNTIME_CONFIG"
+      ${pkgs.coreutils}/bin/chmod 0600 "$RUNTIME_CONFIG"
       CONFIG="$RUNTIME_CONFIG"
     fi
 
