@@ -112,7 +112,12 @@ fn make_acceptor(
         .with_single_cert(certs.to_vec(), key)
         .context("bad certificate/key")?;
 
-    server_config.key_log = Arc::new(rustls::KeyLogFile::new());
+    // Only enable TLS key logging in debug builds (for Wireshark analysis).
+    // In release builds this is a security risk as it leaks session keys.
+    #[cfg(debug_assertions)]
+    {
+        server_config.key_log = Arc::new(rustls::KeyLogFile::new());
+    }
 
     Ok(TlsAcceptor::from(Arc::new(server_config)))
 }

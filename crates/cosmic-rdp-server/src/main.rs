@@ -56,6 +56,15 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut cfg = load_and_merge_config(&cli)?;
 
+    // Security check: refuse to bind to non-localhost without authentication
+    if !cfg.auth.enable && !is_localhost(cfg.bind.ip()) {
+        bail!(
+            "auth.enable must be true when binding to non-localhost address {}. \
+             Set auth.enable=true with credentials, or bind to 127.0.0.1/::1 for local-only access.",
+            cfg.bind.ip()
+        );
+    }
+
     // Start D-Bus server for IPC with the settings UI.
     let dbus_state = rdp_dbus::server::RdpServerState::new(cfg.bind.to_string());
     let (_dbus_conn, mut dbus_cmd_rx) =
@@ -279,4 +288,9 @@ async fn run_with_shutdown(
             }
         }
     }
+}
+
+/// Returns `true` if the address is a loopback address (`127.0.0.1`, `::1`).
+fn is_localhost(ip: std::net::IpAddr) -> bool {
+    ip.is_loopback()
 }
