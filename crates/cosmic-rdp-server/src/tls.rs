@@ -5,7 +5,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use rcgen::{CertificateParams, KeyPair, SanType};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use tokio_rustls::{rustls, TlsAcceptor};
+use tokio_rustls::rustls;
+use tokio_rustls::TlsAcceptor;
 
 /// TLS context with both the acceptor and the DER-encoded server public key.
 ///
@@ -82,11 +83,8 @@ pub fn load_from_files(cert_path: &Path, key_path: &Path) -> Result<TlsContext> 
         .make_acceptor()
         .context("failed to create TLS acceptor")?;
 
-    // Read the cert PEM to extract the public key
-    let cert_pem = std::fs::read(cert_path)
-        .with_context(|| format!("failed to read cert: {}", cert_path.display()))?;
-    let cert_der = extract_first_cert_der(&cert_pem)?;
-    let public_key = extract_public_key(&cert_der);
+    // Use the public key already extracted by TlsIdentityCtx (same logic as our extract_public_key)
+    let public_key = tls_ctx.pub_key;
 
     Ok(TlsContext {
         acceptor,
@@ -94,31 +92,25 @@ pub fn load_from_files(cert_path: &Path, key_path: &Path) -> Result<TlsContext> 
     })
 }
 
-/// Extract the DER-encoded public key from a certificate.
+/// Extract the raw `subjectPublicKey` bytes from a certificate.
 ///
-/// Uses the `SubjectPublicKeyInfo` field from the X.509 certificate,
-/// which is what `CredSSP` expects for the server public key binding.
+/// The `CredSSP` protocol compares the raw bytes of the `subjectPublicKey`
+/// BIT STRING from the server's TLS certificate. Both the server and client
+/// must agree on this value. This matches the extraction in
+/// `ironrdp_server::helper::TlsIdentityCtx` and the sspi crate's
+/// `raw_peer_public_key()`.
 fn extract_public_key(cert_der: &CertificateDer<'_>) -> Vec<u8> {
-    // The `CredSSP` protocol needs the raw SubjectPublicKeyInfo from the
-    // server certificate. We extract it by parsing the certificate DER.
-    // For ironrdp-server's with_hybrid(), this is passed as Vec<u8>.
-    //
-    // The full certificate DER is the correct input - ironrdp-server
-    // extracts the public key internally during `CredSSP` negotiation.
-    cert_der.to_vec()
-}
+    use x509_cert::der::Decode as _;
 
-/// Extract the first certificate DER from a PEM file's contents.
-fn extract_first_cert_der(pem_data: &[u8]) -> Result<CertificateDer<'static>> {
-    let mut reader = std::io::BufReader::new(pem_data);
-    let certs = rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<_>, _>>()
-        .context("failed to parse PEM certificates")?;
+    let cert = x509_cert::Certificate::from_der(cert_der)
+        .expect("failed to parse self-generated certificate DER");
 
-    certs
-        .into_iter()
-        .next()
-        .context("no certificates found in PEM file")
+    cert.tbs_certificate
+        .subject_public_key_info
+        .subject_public_key
+        .as_bytes()
+        .expect("subject public key BIT STRING is not byte-aligned")
+        .to_owned()
 }
 
 fn make_acceptor(

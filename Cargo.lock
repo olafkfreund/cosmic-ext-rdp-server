@@ -1520,7 +1520,6 @@ dependencies = [
  "rdp-encode",
  "rdp-input",
  "rustls",
- "rustls-pemfile",
  "serde",
  "thiserror 2.0.18",
  "tokio",
@@ -1528,6 +1527,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
+ "x509-cert",
  "zbus 5.13.2",
 ]
 
