@@ -1511,6 +1511,8 @@ dependencies = [
  "ironrdp-cliprdr",
  "ironrdp-core",
  "ironrdp-displaycontrol",
+ "ironrdp-dvc",
+ "ironrdp-egfx",
  "ironrdp-pdu",
  "ironrdp-rdpsnd",
  "ironrdp-server",
@@ -2781,6 +2783,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "getrandom"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "139ef39800118c7683f2fd3c98c1b23c09ae076556b435f8e9064ae108aaeeec"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "r-efi",
+ "wasip2",
+ "wasip3",
+]
+
+[[package]]
 name = "ghash"
 version = "0.6.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3845,6 +3860,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "id-arena"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3910,6 +3931,8 @@ checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
 dependencies = [
  "equivalent",
  "hashbrown 0.16.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -4012,8 +4035,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-acceptor"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52c18abf50681dda6ea22ac3a812a385ee915a4a69512c775c2358541e89fdd2"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "ironrdp-async",
  "ironrdp-connector",
@@ -4026,8 +4048,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-ainput"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bea4a1141844614f392a6da307e96eba951f77bd14bb641303a36ea38d48e12f"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "bitflags 2.10.0",
  "ironrdp-core",
@@ -4039,8 +4060,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-async"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62813c05253206699b2c8e44e268908dafd9668e07bb46ff262ee5b42d13e8cd"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "bytes",
  "ironrdp-connector",
@@ -4052,8 +4072,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-cliprdr"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c9b4286b677b65b57bb1d5c4453ef46c1cf3858f30515b2016465978b4b1e2b"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "bitflags 2.10.0",
  "ironrdp-core",
@@ -4065,8 +4084,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-connector"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a8d5c1b8f167bbd9c935b08a4d3b592fe0a163ded7e4cc8880d471f06b3e2fa"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "ironrdp-core",
  "ironrdp-error",
@@ -4084,8 +4102,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-core"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2db60a59716a84d09040d29c9e75e81545842510fccb0934c09b28e78b46680"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "ironrdp-error",
 ]
@@ -4093,8 +4110,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-displaycontrol"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6ea49ab58df70f3cfda6c2772c598603df02a7bfb0ddc84e563e25cd7c4e340"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "ironrdp-core",
  "ironrdp-dvc",
@@ -4106,8 +4122,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-dvc"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdf251c27aed3f73d4f25e86b1bee1c9d82145ec665de8317edbf2da7c42ebe8"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "ironrdp-core",
  "ironrdp-pdu",
@@ -4117,16 +4132,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ironrdp-egfx"
+version = "0.1.0"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
+dependencies = [
+ "bit_field",
+ "bitflags 2.10.0",
+ "ironrdp-core",
+ "ironrdp-dvc",
+ "ironrdp-graphics",
+ "ironrdp-pdu",
+ "tracing",
+]
+
+[[package]]
 name = "ironrdp-error"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a9d7794e854eef2f13fdf79c8502bcc567a75a15fd0522885f37739386a4cef"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 
 [[package]]
 name = "ironrdp-graphics"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a039574abd3303506ee93c1376fcc9ce13de660c98a38ca9b716b45c369dff8d"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "bit_field",
  "bitflags 2.10.0",
@@ -4142,8 +4169,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-pdu"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "409b96a94ca1fad1bfaa41789611bbb5efc112503b27b0513a1feb243e49eb60"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "bit_field",
  "bitflags 2.10.0",
@@ -4166,8 +4192,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-rdpsnd"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29897b54e358d7ad309937832dbcc71cff310dc223fa70cfc5d66db8c61b3a6b"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "bitflags 2.10.0",
  "ironrdp-core",
@@ -4179,8 +4204,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-server"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2a15046611c443c9484b230ca7daf489a14b588c4cd6ff558228cc23c142297"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4210,8 +4234,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-svc"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aef43a3ea966070b0e12a3f49ffb863c80311bd15f26c2b3681622c85e70d729"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "bitflags 2.10.0",
  "ironrdp-core",
@@ -4221,8 +4244,7 @@ dependencies = [
 [[package]]
 name = "ironrdp-tokio"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6af190b161daba5d88c614bbf5915fdb586e9a28cb4b938aaac7abf473a1109b"
+source = "git+https://github.com/olafkfreund/cosmic-IronRDP#4cec150dfefe3efd115e835759b9b0cbcc457cce"
 dependencies = [
  "bytes",
  "ironrdp-async",
@@ -4427,10 +4449,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
-name = "libc"
-version = "0.2.180"
+name = "leb128fmt"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
+checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
+
+[[package]]
+name = "libc"
+version = "0.2.181"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "459427e2af2b9c839b132acb702a1c654d95e10f8c326bfc2ad11310e458b1c5"
 
 [[package]]
 name = "libcosmic"
@@ -6087,6 +6115,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
 
 [[package]]
+name = "prettyplease"
+version = "0.2.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.114",
+]
+
+[[package]]
 name = "primefield"
 version = "0.14.0-pre.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7626,7 +7664,7 @@ dependencies = [
  "cfg-expr 0.20.6",
  "heck 0.5.0",
  "pkg-config",
- "toml 0.9.11+spec-1.1.0",
+ "toml 0.9.12+spec-1.1.0",
  "version-compare",
 ]
 
@@ -7668,12 +7706,12 @@ checksum = "df7f62577c25e07834649fc3b39fafdc597c0a3527dc1c60129201ccfcbaa50c"
 
 [[package]]
 name = "tempfile"
-version = "3.24.0"
+version = "3.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "655da9c7eb6305c55742045d5a8d2037996d61d8de95806335c7c86ce0f82e9c"
+checksum = "0136791f7c95b1f6dd99f9cc786b91bb81c3800b639b3478e561ddb7be95e5f1"
 dependencies = [
  "fastrand 2.3.0",
- "getrandom 0.3.4",
+ "getrandom 0.4.1",
  "once_cell",
  "rustix 1.1.3",
  "windows-sys 0.61.2",
@@ -7955,9 +7993,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.9.11+spec-1.1.0"
+version = "0.9.12+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3afc9a848309fe1aaffaed6e1546a7a14de1f935dc9d89d32afd9a44bab7c46"
+checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
 dependencies = [
  "indexmap",
  "serde_core",
@@ -8025,9 +8063,9 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.0.6+spec-1.1.0"
+version = "1.0.7+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3198b4b0a8e11f09dd03e133c0280504d0801269e9afa46362ffde1cbeebf44"
+checksum = "247eaa3197818b831697600aadf81514e577e0cba5eab10f7e064e78ae154df1"
 dependencies = [
  "winnow 0.7.14",
 ]
@@ -8449,6 +8487,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasip3"
+version = "0.4.0+wasi-0.3.0-rc-2026-01-06"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5428f8bf88ea5ddc08faddef2ac4a67e390b88186c703ce6dbd955e1c145aca5"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "wasm-bindgen"
 version = "0.2.108"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8508,6 +8555,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-encoder"
+version = "0.244.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "990065f2fe63003fe337b932cfb5e3b80e0b4d0f5ff650e6985b1048f62c8319"
+dependencies = [
+ "leb128fmt",
+ "wasmparser",
+]
+
+[[package]]
+name = "wasm-metadata"
+version = "0.244.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb0e353e6a2fbdc176932bbaab493762eb1255a7900fe0fea1a2f96c296cc909"
+dependencies = [
+ "anyhow",
+ "indexmap",
+ "wasm-encoder",
+ "wasmparser",
+]
+
+[[package]]
 name = "wasm-timer"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8520,6 +8589,18 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.244.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47b807c72e1bac69382b3a6fb3dbe8ea4c0ed87ff5629b8685ae6b9a611028fe"
+dependencies = [
+ "bitflags 2.10.0",
+ "hashbrown 0.15.5",
+ "indexmap",
+ "semver",
 ]
 
 [[package]]
@@ -8710,7 +8791,7 @@ dependencies = [
  "js-sys",
  "log",
  "naga",
- "parking_lot 0.12.5",
+ "parking_lot 0.11.2",
  "profiling",
  "raw-window-handle",
  "smallvec",
@@ -8738,7 +8819,7 @@ dependencies = [
  "log",
  "naga",
  "once_cell",
- "parking_lot 0.12.5",
+ "parking_lot 0.11.2",
  "profiling",
  "raw-window-handle",
  "rustc-hash 1.1.0",
@@ -8779,7 +8860,7 @@ dependencies = [
  "ndk-sys 0.5.0+25.2.9519653",
  "objc",
  "once_cell",
- "parking_lot 0.12.5",
+ "parking_lot 0.11.2",
  "profiling",
  "range-alloc",
  "raw-window-handle",
@@ -9454,6 +9535,88 @@ name = "wit-bindgen"
 version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7249219f66ced02969388cf2bb044a09756a083d0fab1e566056b04d9fbcaa5"
+dependencies = [
+ "wit-bindgen-rust-macro",
+]
+
+[[package]]
+name = "wit-bindgen-core"
+version = "0.51.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea61de684c3ea68cb082b7a88508a8b27fcc8b797d738bfc99a82facf1d752dc"
+dependencies = [
+ "anyhow",
+ "heck 0.5.0",
+ "wit-parser",
+]
+
+[[package]]
+name = "wit-bindgen-rust"
+version = "0.51.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7c566e0f4b284dd6561c786d9cb0142da491f46a9fbed79ea69cdad5db17f21"
+dependencies = [
+ "anyhow",
+ "heck 0.5.0",
+ "indexmap",
+ "prettyplease",
+ "syn 2.0.114",
+ "wasm-metadata",
+ "wit-bindgen-core",
+ "wit-component",
+]
+
+[[package]]
+name = "wit-bindgen-rust-macro"
+version = "0.51.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c0f9bfd77e6a48eccf51359e3ae77140a7f50b1e2ebfe62422d8afdaffab17a"
+dependencies = [
+ "anyhow",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+ "wit-bindgen-core",
+ "wit-bindgen-rust",
+]
+
+[[package]]
+name = "wit-component"
+version = "0.244.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d66ea20e9553b30172b5e831994e35fbde2d165325bec84fc43dbf6f4eb9cb2"
+dependencies = [
+ "anyhow",
+ "bitflags 2.10.0",
+ "indexmap",
+ "log",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "wasm-encoder",
+ "wasm-metadata",
+ "wasmparser",
+ "wit-parser",
+]
+
+[[package]]
+name = "wit-parser"
+version = "0.244.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecc8ac4bc1dc3381b7f59c34f00b67e18f910c2c0f50015669dde7def656a736"
+dependencies = [
+ "anyhow",
+ "id-arena",
+ "indexmap",
+ "log",
+ "semver",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "unicode-xid",
+ "wasmparser",
+]
 
 [[package]]
 name = "writeable"

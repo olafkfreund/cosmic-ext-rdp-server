@@ -6,6 +6,7 @@ use clap::Parser;
 mod clipboard;
 mod config;
 mod dbus;
+mod egfx;
 mod server;
 mod sound;
 mod tls;
@@ -56,21 +57,23 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut cfg = load_and_merge_config(&cli)?;
 
-    // Security check: refuse to bind to non-localhost without authentication
-    if !cfg.auth.enable && !is_localhost(cfg.bind.ip()) {
-        bail!(
-            "auth.enable must be true when binding to non-localhost address {}. \
-             Set auth.enable=true with credentials, or bind to 127.0.0.1/::1 for local-only access.",
-            cfg.bind.ip()
-        );
-    }
-
     // Start D-Bus server for IPC with the settings UI.
     let dbus_state = rdp_dbus::server::RdpServerState::new(cfg.bind.to_string());
     let (_dbus_conn, mut dbus_cmd_rx) =
         dbus::start_dbus_server(dbus_state.clone()).await?;
 
     loop {
+        // Security check: refuse to bind to non-localhost without authentication.
+        // Checked every loop iteration (including after config reload) to prevent
+        // auth bypass via D-Bus Reload with a modified config.
+        if !cfg.auth.enable && !is_localhost(cfg.bind.ip()) {
+            bail!(
+                "auth.enable must be true when binding to non-localhost address {}. \
+                 Set auth.enable=true with credentials, or bind to 127.0.0.1/::1 for local-only access.",
+                cfg.bind.ip()
+            );
+        }
+
         let tls_ctx = setup_tls(&cfg)?;
         let auth = setup_auth(&cfg)?;
 
@@ -220,7 +223,12 @@ async fn run_live_or_fallback(
                 "Live screen capture active"
             );
 
-            let live_display = server::LiveDisplay::new(event_rx, &desktop_info);
+            let mut live_display = server::LiveDisplay::new(event_rx, &desktop_info);
+
+            // Create EGFX components for H.264 delivery via DVC.
+            let (egfx_bridge, egfx_controller, egfx_event_setter) =
+                egfx::create_egfx(desktop_info.width, desktop_info.height);
+            live_display.set_egfx(egfx_controller);
 
             let input_handler = match rdp_input::EiInput::new().await {
                 Ok(ei_input) => {
@@ -239,8 +247,12 @@ async fn run_live_or_fallback(
             };
 
             let rdp_server = server::build_live_server(
-                cfg.bind, tls_ctx, auth, live_display, input_handler, make_cliprdr(), make_sound(),
+                cfg.bind, tls_ctx, auth, live_display, input_handler,
+                make_cliprdr(), make_sound(), Some(egfx_bridge),
             );
+            // Set the event sender so the EGFX controller can push
+            // H.264 frames proactively via ServerEvent::DvcOutput.
+            egfx_event_setter.set_event_sender(rdp_server.event_sender().clone());
             let _capture = capture_handle;
             run_with_shutdown(rdp_server, dbus_cmd_rx).await
         }

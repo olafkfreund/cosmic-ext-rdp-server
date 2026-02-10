@@ -5,16 +5,18 @@ use anyhow::Result;
 use bytes::Bytes;
 use ironrdp_displaycontrol::pdu::DisplayControlMonitorLayout;
 use ironrdp_pdu::input::fast_path::SynchronizeFlags;
+use ironrdp_pdu::pointer::PointerPositionAttribute;
 use ironrdp_server::{
     BitmapUpdate, CliprdrServerFactory, DesktopSize, DisplayUpdate, KeyboardEvent, MouseEvent,
     PixelFormat, RGBAPointer, RdpServer, RdpServerDisplay, RdpServerDisplayUpdates,
     RdpServerInputHandler, SoundServerFactory,
 };
-use ironrdp_pdu::pointer::PointerPositionAttribute;
 use rdp_capture::{CaptureEvent, CapturedFrame, CursorInfo, DesktopInfo};
+use rdp_encode::{EncoderConfig, GstEncoder};
 use rdp_input::{EiInput, MouseButton};
 use tokio::sync::mpsc;
 
+use crate::egfx::EgfxController;
 use crate::tls::TlsContext;
 
 const DEFAULT_WIDTH: u16 = 1920;
@@ -254,6 +256,8 @@ pub struct LiveDisplay {
     /// layout change, we send the new size here; the `LiveDisplayUpdates`
     /// picks it up and emits `DisplayUpdate::Resize`.
     resize_tx: mpsc::Sender<DesktopSize>,
+    /// EGFX controller for H.264 delivery (optional).
+    egfx: Option<EgfxController>,
 }
 
 impl LiveDisplay {
@@ -271,7 +275,13 @@ impl LiveDisplay {
                 resize_rx: Some(resize_rx),
             })),
             resize_tx,
+            egfx: None,
         }
+    }
+
+    /// Attach an EGFX controller for H.264 frame delivery.
+    pub fn set_egfx(&mut self, controller: EgfxController) {
+        self.egfx = Some(controller);
     }
 }
 
@@ -304,6 +314,9 @@ impl RdpServerDisplay for LiveDisplay {
             resize_rx: Some(resize_rx),
             channels: Arc::clone(&self.channels),
             pending_cursor: None,
+            egfx: self.egfx.take(),
+            encoder: None,
+            frame_timestamp_ms: 0,
         }))
     }
 
@@ -335,6 +348,11 @@ impl RdpServerDisplay for LiveDisplay {
 
 /// Display updates that receive live frames from the `PipeWire` capture
 /// and handle dynamic resize events from the RDP client.
+///
+/// When an [`EgfxController`] is present and ready, captured frames are
+/// encoded to H.264 via [`GstEncoder`] and delivered through the EGFX
+/// DVC channel instead of as raw bitmaps. Falls back to bitmaps when
+/// EGFX is not negotiated.
 struct LiveDisplayUpdates {
     event_rx: Option<mpsc::Receiver<CaptureEvent>>,
     resize_rx: Option<mpsc::Receiver<DesktopSize>>,
@@ -343,6 +361,12 @@ struct LiveDisplayUpdates {
     /// When a `FrameAndCursor` event arrives, we return the frame first
     /// and buffer the cursor update for the next call.
     pending_cursor: Option<CursorInfo>,
+    /// EGFX controller for H.264 frame delivery (if available).
+    egfx: Option<EgfxController>,
+    /// H.264 encoder, lazily initialized on first EGFX frame.
+    encoder: Option<GstEncoder>,
+    /// Frame timestamp counter (milliseconds), monotonically increasing.
+    frame_timestamp_ms: u32,
 }
 
 impl Drop for LiveDisplayUpdates {
@@ -350,6 +374,8 @@ impl Drop for LiveDisplayUpdates {
         let mut channels = self.channels.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         channels.event_rx = self.event_rx.take();
         channels.resize_rx = self.resize_rx.take();
+        // Drop the encoder to release GStreamer resources.
+        self.encoder = None;
         tracing::info!("Client disconnected, display channels released for next connection");
     }
 }
@@ -363,47 +389,141 @@ impl RdpServerDisplayUpdates for LiveDisplayUpdates {
             return Ok(Some(cursor_to_display_update(&cursor)));
         }
 
-        let event_rx = self.event_rx.as_mut().expect("event_rx missing during active connection");
-        let resize_rx = self.resize_rx.as_mut().expect("resize_rx missing during active connection");
+        // Destructure self into individual fields so the borrow checker
+        // can track each independently inside tokio::select!.
+        let Self {
+            event_rx,
+            resize_rx,
+            pending_cursor,
+            egfx,
+            encoder,
+            frame_timestamp_ms,
+            ..
+        } = self;
 
-        // All branches are cancellation-safe (mpsc::Receiver::recv)
-        tokio::select! {
-            event = event_rx.recv() => {
-                let Some(event) = event else {
-                    return Ok(None);
-                };
+        let event_rx = event_rx.as_mut().expect("event_rx missing during active connection");
+        let resize_rx = resize_rx.as_mut().expect("resize_rx missing during active connection");
 
-                match event {
-                    CaptureEvent::Frame(mut frame) => {
-                        frame.ensure_alpha_opaque();
-                        let bitmap = frame_to_bitmap(frame)?;
-                        Ok(Some(DisplayUpdate::Bitmap(bitmap)))
-                    }
-                    CaptureEvent::Cursor(cursor) => {
-                        Ok(Some(cursor_to_display_update(&cursor)))
-                    }
-                    CaptureEvent::FrameAndCursor(mut frame, cursor) => {
-                        // Return the frame now, buffer cursor for next call.
-                        self.pending_cursor = Some(cursor);
-                        frame.ensure_alpha_opaque();
-                        let bitmap = frame_to_bitmap(frame)?;
-                        Ok(Some(DisplayUpdate::Bitmap(bitmap)))
+        loop {
+            // All branches are cancellation-safe (mpsc::Receiver::recv)
+            tokio::select! {
+                event = event_rx.recv() => {
+                    let Some(event) = event else {
+                        return Ok(None);
+                    };
+
+                    match event {
+                        CaptureEvent::Frame(mut frame) => {
+                            frame.ensure_alpha_opaque();
+                            if try_send_egfx_frame(egfx.as_ref(), encoder, frame_timestamp_ms, &frame) {
+                                // Frame sent via EGFX H.264 — don't return
+                                // a bitmap, loop back for the next event.
+                                continue;
+                            }
+                            let bitmap = frame_to_bitmap(frame)?;
+                            return Ok(Some(DisplayUpdate::Bitmap(bitmap)));
+                        }
+                        CaptureEvent::Cursor(cursor) => {
+                            return Ok(Some(cursor_to_display_update(&cursor)));
+                        }
+                        CaptureEvent::FrameAndCursor(mut frame, cursor) => {
+                            // Buffer cursor for next call.
+                            *pending_cursor = Some(cursor);
+                            frame.ensure_alpha_opaque();
+                            if try_send_egfx_frame(egfx.as_ref(), encoder, frame_timestamp_ms, &frame) {
+                                continue;
+                            }
+                            let bitmap = frame_to_bitmap(frame)?;
+                            return Ok(Some(DisplayUpdate::Bitmap(bitmap)));
+                        }
                     }
                 }
+                size = resize_rx.recv() => {
+                    let Some(new_size) = size else {
+                        return Ok(None);
+                    };
+                    tracing::info!(
+                        width = new_size.width,
+                        height = new_size.height,
+                        "Emitting display resize"
+                    );
+                    // Also resize the EGFX surface if active.
+                    if let Some(ref egfx) = *egfx {
+                        egfx.resize(new_size.width, new_size.height);
+                    }
+                    return Ok(Some(DisplayUpdate::Resize(new_size)));
+                }
             }
-            size = resize_rx.recv() => {
-                let Some(new_size) = size else {
-                    // Resize channel closed - continue with frames only.
-                    // This shouldn't normally happen.
-                    return Ok(None);
-                };
+        }
+    }
+}
+
+/// Try to encode a frame as H.264 and send it via EGFX.
+///
+/// Returns `true` if the frame was sent via EGFX (caller should skip
+/// bitmap delivery), `false` if EGFX is not ready and bitmap fallback
+/// should be used.
+///
+/// This is a free function to avoid borrow-checker conflicts with the
+/// `tokio::select!` macro holding `&mut event_rx` across the call.
+#[allow(clippy::cast_possible_truncation)]
+fn try_send_egfx_frame(
+    egfx: Option<&EgfxController>,
+    h264_encoder: &mut Option<GstEncoder>,
+    timestamp_ms: &mut u32,
+    frame: &CapturedFrame,
+) -> bool {
+    let Some(egfx) = egfx else {
+        return false;
+    };
+
+    if !egfx.is_ready() || !egfx.supports_avc420() {
+        return false;
+    }
+
+    // Lazily initialize the H.264 encoder on the first EGFX frame.
+    if h264_encoder.is_none() {
+        let config = EncoderConfig {
+            width: frame.width,
+            height: frame.height,
+            ..EncoderConfig::default()
+        };
+        match GstEncoder::new(&config) {
+            Ok(enc) => {
                 tracing::info!(
-                    width = new_size.width,
-                    height = new_size.height,
-                    "Emitting display resize"
+                    width = frame.width,
+                    height = frame.height,
+                    encoder_type = %enc.encoder_type(),
+                    "EGFX: H.264 encoder initialized"
                 );
-                Ok(Some(DisplayUpdate::Resize(new_size)))
+                *h264_encoder = Some(enc);
             }
+            Err(e) => {
+                tracing::warn!("EGFX: failed to initialize H.264 encoder: {e}, falling back to bitmap");
+                return false;
+            }
+        }
+    }
+
+    let enc = h264_encoder.as_mut().expect("encoder just initialized");
+
+    match enc.encode_frame(&frame.data) {
+        Ok(Some(h264_frame)) => {
+            let width = frame.width as u16;
+            let height = frame.height as u16;
+            let ts = *timestamp_ms;
+            *timestamp_ms = timestamp_ms.wrapping_add(33); // ~30 fps
+
+            egfx.send_frame(&h264_frame.data, width, height, ts)
+        }
+        Ok(None) => {
+            // Encoder is buffering, no output yet — fall back to bitmap
+            // for this frame so the client isn't starved.
+            false
+        }
+        Err(e) => {
+            tracing::warn!("EGFX: H.264 encoding failed: {e}, falling back to bitmap");
+            false
         }
     }
 }
@@ -506,6 +626,10 @@ pub fn build_server(
 }
 
 /// Build an RDP server with live screen capture and input injection.
+///
+/// If `egfx_bridge` is provided, it is registered as a DVC processor for
+/// EGFX/H.264 frame delivery through the DRDYNVC channel.
+#[allow(clippy::too_many_arguments)]
 pub fn build_live_server(
     bind_addr: std::net::SocketAddr,
     tls: &TlsContext,
@@ -514,6 +638,7 @@ pub fn build_live_server(
     input_handler: LiveInputHandler,
     cliprdr: Option<Box<dyn CliprdrServerFactory>>,
     sound: Option<Box<dyn SoundServerFactory>>,
+    egfx_bridge: Option<Box<dyn ironrdp_dvc::DvcProcessor>>,
 ) -> RdpServer {
     let builder = RdpServer::builder().with_addr(bind_addr);
     let builder = with_security!(builder, tls, auth);
@@ -524,6 +649,9 @@ pub fn build_live_server(
         .with_sound_factory(sound)
         .build();
     apply_credentials(&mut server, auth);
+    if let Some(bridge) = egfx_bridge {
+        server.add_dvc_processor(bridge);
+    }
     server
 }
 
