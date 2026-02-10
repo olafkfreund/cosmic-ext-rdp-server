@@ -286,6 +286,126 @@ services.cosmic-rdp-server = {
 
 The systemd service runs as a user service (`graphical-session.target`) with security hardening (no new privileges, read-only home, private tmp, restricted syscalls).
 
+## Home Manager Module
+
+For user-level installation without system-wide NixOS changes.
+
+### Basic setup
+
+```nix
+{
+  inputs.cosmic-rdp-server.url = "github:olafkfreund/cosmic-rdp-server";
+
+  outputs = { self, nixpkgs, home-manager, cosmic-rdp-server, ... }: {
+    homeConfigurations."user" = home-manager.lib.homeManagerConfiguration {
+      modules = [
+        cosmic-rdp-server.homeManagerModules.default
+        {
+          nixpkgs.overlays = [ cosmic-rdp-server.overlays.default ];
+
+          services.cosmic-rdp-server = {
+            enable = true;
+            autoStart = true;
+
+            settings = {
+              bind = "0.0.0.0:3389";
+              capture.fps = 30;
+              audio.enable = true;
+            };
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+### With NLA authentication (Home Manager)
+
+```nix
+services.cosmic-rdp-server = {
+  enable = true;
+  autoStart = true;
+
+  auth = {
+    enable = true;
+    username = "rdpuser";
+    passwordFile = "/run/agenix/cosmic-rdp-password";
+  };
+
+  settings.bind = "0.0.0.0:3389";
+};
+```
+
+### Home Manager options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable` | bool | `false` | Enable the COSMIC RDP Server |
+| `package` | package | `pkgs.cosmic-rdp-server` | Server package to use |
+| `installSettings` | bool | `true` | Install the COSMIC Settings GUI |
+| `settingsPackage` | package | `pkgs.cosmic-rdp-settings` | Settings GUI package |
+| `autoStart` | bool | `false` | Start with the graphical session |
+| `auth.enable` | bool | `false` | Enable NLA authentication |
+| `auth.username` | string | `""` | NLA username |
+| `auth.domain` | string | `null` | NLA domain (optional) |
+| `auth.passwordFile` | path | `null` | Path to password file (loaded via `LoadCredential`) |
+| `settings` | attrs | `{}` | TOML configuration (see Configuration section) |
+
+The Home Manager service includes the same systemd security hardening as the NixOS module.
+
+## Full Remote Desktop Stack
+
+For a complete remote desktop setup on COSMIC, you need three components working together:
+
+```
+RDP Client  -->  cosmic-rdp-server  -->  Portal (RemoteDesktop)  -->  Compositor (EIS)
+                                    -->  Portal (ScreenCast)     -->  PipeWire streams
+```
+
+| Component | Repository | Purpose |
+|-----------|-----------|---------|
+| [cosmic-rdp-server](https://github.com/olafkfreund/cosmic-rdp-server) | This repo | RDP protocol server, capture + input orchestration |
+| [xdg-desktop-portal-cosmic](https://github.com/olafkfreund/xdg-desktop-portal-cosmic) | Portal fork | RemoteDesktop + ScreenCast portal interfaces |
+| [cosmic-comp-rdp](https://github.com/olafkfreund/cosmic-comp-rdp) | Compositor fork | EIS receiver for input injection |
+
+### NixOS example (all three)
+
+```nix
+{
+  inputs = {
+    cosmic-rdp-server.url = "github:olafkfreund/cosmic-rdp-server";
+    xdg-desktop-portal-cosmic.url = "github:olafkfreund/xdg-desktop-portal-cosmic";
+    cosmic-comp.url = "github:olafkfreund/cosmic-comp-rdp";
+  };
+
+  outputs = { self, nixpkgs, cosmic-rdp-server, xdg-desktop-portal-cosmic, cosmic-comp, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      modules = [
+        cosmic-rdp-server.nixosModules.default
+        xdg-desktop-portal-cosmic.nixosModules.default
+        cosmic-comp.nixosModules.default
+        {
+          nixpkgs.overlays = [
+            cosmic-rdp-server.overlays.default
+            xdg-desktop-portal-cosmic.overlays.default
+            cosmic-comp.overlays.default
+          ];
+
+          services.cosmic-comp.enable = true;
+          services.xdg-desktop-portal-cosmic.enable = true;
+          services.cosmic-rdp-server = {
+            enable = true;
+            openFirewall = true;
+            settings.bind = "0.0.0.0:3389";
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
 ## D-Bus Interface
 
 The daemon exposes a D-Bus interface at `com.system76.CosmicRdpServer` on the session bus for IPC with the settings GUI:
