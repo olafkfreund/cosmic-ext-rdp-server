@@ -28,11 +28,9 @@ let
       RUNTIME_CONFIG="''${RUNTIME_DIRECTORY}/config.toml"
       ${pkgs.coreutils}/bin/cp "$CONFIG" "$RUNTIME_CONFIG"
       PASSWORD=$(${pkgs.coreutils}/bin/cat "$CREDENTIALS_DIRECTORY/rdp-password")
-      ${pkgs.coreutils}/bin/cat >> "$RUNTIME_CONFIG" <<TOMLEOF
-
-[auth]
-password = "$PASSWORD"
-TOMLEOF
+      # Escape backslashes and double quotes for safe TOML string embedding
+      PASSWORD=$(printf '%s' "$PASSWORD" | ${pkgs.gnused}/bin/sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+      printf '\n[auth]\npassword = "%s"\n' "$PASSWORD" >> "$RUNTIME_CONFIG"
       CONFIG="$RUNTIME_CONFIG"
     fi
 

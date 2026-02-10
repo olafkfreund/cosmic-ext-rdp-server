@@ -1,4 +1,6 @@
 use std::net::SocketAddr;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -64,6 +66,11 @@ pub fn save(config: &ServerConfig) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create config dir: {}", parent.display()))?;
+
+        // Restrict directory permissions (config may contain auth password).
+        #[cfg(unix)]
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("failed to set config dir permissions: {}", parent.display()))?;
     }
 
     let contents = toml::to_string_pretty(config).context("failed to serialize config")?;
@@ -72,6 +79,12 @@ pub fn save(config: &ServerConfig) -> Result<()> {
     let tmp_path = path.with_extension("toml.tmp");
     std::fs::write(&tmp_path, contents)
         .with_context(|| format!("failed to write temp config: {}", tmp_path.display()))?;
+
+    // Set restrictive permissions before rename (config may contain auth password).
+    #[cfg(unix)]
+    std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("failed to set config permissions: {}", tmp_path.display()))?;
+
     std::fs::rename(&tmp_path, &path)
         .with_context(|| format!("failed to rename config: {}", path.display()))?;
 

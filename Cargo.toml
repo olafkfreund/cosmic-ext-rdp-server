@@ -62,7 +62,7 @@ arboard = "3"
 
 # Input injection (direct libei protocol via reis)
 reis = { version = "0.5", features = ["tokio"] }
-rustix = { version = "0.38", features = ["event"] }
+rustix = { version = "0.38", features = ["event", "process"] }
 
 # TLS
 tokio-rustls = "0.26"
