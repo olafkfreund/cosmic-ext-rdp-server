@@ -1,6 +1,6 @@
 //! `GStreamer` H.264 encoding pipeline.
 //!
-//! Pipeline: `appsrc ! videoconvert ! encoder ! h264parse ! appsink`
+//! Pipeline: `appsrc ! videoconvert ! capsfilter(I420,BT.709-full) ! encoder ! h264parse ! appsink`
 //!
 //! Supports hardware-accelerated encoding via VAAPI (Intel/AMD) and
 //! NVENC (NVIDIA), with automatic fallback to x264 software encoding.
@@ -73,7 +73,7 @@ pub fn detect_best_encoder() -> EncoderType {
 /// H.264 encoder using a `GStreamer` pipeline.
 ///
 /// Creates and manages the pipeline:
-/// `appsrc ! videoconvert ! encoder ! h264parse ! appsink`
+/// `appsrc ! videoconvert ! capsfilter(I420,BT.709 full) ! encoder ! h264parse ! appsink`
 ///
 /// Push raw BGRx/BGRA frames via [`encode_frame`](GstEncoder::encode_frame)
 /// and receive H.264 NAL units in byte-stream format.
@@ -82,9 +82,13 @@ pub struct GstEncoder {
     appsrc: gst_app::AppSrc,
     appsink: gst_app::AppSink,
     encoder_type: EncoderType,
+    width: u32,
+    height: u32,
     running: bool,
     /// Log negotiated caps once after first successful buffer push.
     caps_logged: bool,
+    /// Dump first raw frame + keyframe to /tmp for color diagnostics.
+    frame_dumped: bool,
 }
 
 impl GstEncoder {
@@ -110,8 +114,11 @@ impl GstEncoder {
             appsrc,
             appsink,
             encoder_type,
+            width: config.width,
+            height: config.height,
             running: false,
             caps_logged: false,
+            frame_dumped: false,
         })
     }
 
@@ -183,6 +190,22 @@ impl GstEncoder {
             .push_buffer(buffer)
             .map_err(|e| EncodeError::PushBuffer(e.to_string()))?;
 
+        // Dump the first raw frame for color diagnostics.
+        if !self.frame_dumped {
+            if let Err(e) = std::fs::write("/tmp/rdp_raw_frame.bgra", frame_data) {
+                tracing::warn!("Frame dump: failed to write raw frame: {e}");
+            } else {
+                tracing::info!(
+                    width = self.width,
+                    height = self.height,
+                    size = frame_data.len(),
+                    "Frame dump: raw BGRx -> /tmp/rdp_raw_frame.bgra \
+                     (view: ffplay -f rawvideo -pixel_format bgra -video_size {}x{} /tmp/rdp_raw_frame.bgra)",
+                    self.width, self.height
+                );
+            }
+        }
+
         // Log negotiated caps once after first buffer push, when GStreamer
         // has actually performed caps negotiation (caps are None at start()).
         if !self.caps_logged {
@@ -203,7 +226,25 @@ impl GstEncoder {
         }
 
         // Try to pull an encoded frame
-        self.pull_encoded_frame()
+        let result = self.pull_encoded_frame()?;
+
+        // Dump first H.264 keyframe for external analysis.
+        if let Some(ref frame) = result {
+            if frame.is_keyframe && !self.frame_dumped {
+                self.frame_dumped = true;
+                if let Err(e) = std::fs::write("/tmp/rdp_h264_keyframe.h264", &frame.data) {
+                    tracing::warn!("Frame dump: failed to write H.264 keyframe: {e}");
+                } else {
+                    tracing::info!(
+                        size = frame.data.len(),
+                        "Frame dump: H.264 keyframe -> /tmp/rdp_h264_keyframe.h264 \
+                         (decode: ffmpeg -i /tmp/rdp_h264_keyframe.h264 -vframes 1 /tmp/rdp_decoded.png)"
+                    );
+                }
+            }
+        }
+
+        Ok(result)
     }
 
     /// Force the encoder to produce an IDR keyframe on the next output.
@@ -267,7 +308,7 @@ impl Drop for GstEncoder {
 
 /// Build the `GStreamer` encoding pipeline.
 ///
-/// `appsrc ! videoconvert ! encoder ! h264parse ! appsink`
+/// `appsrc ! videoconvert ! capsfilter(I420,BT.709-full) ! encoder ! h264parse ! appsink`
 fn build_pipeline(
     config: &EncoderConfig,
     encoder_type: EncoderType,
@@ -301,9 +342,21 @@ fn build_pipeline(
         .build();
 
     // videoconvert: RGB→YUV color space conversion.
-    // No capsfilter — let GStreamer auto-negotiate I420 format and
-    // colorimetry with the encoder directly.
     let videoconvert = make_element("videoconvert", "convert")?;
+
+    // Capsfilter: force I420 with BT.709 full-range colorimetry.
+    //
+    // FreeRDP's prim_YUV.c decodes using BT.709 full-range coefficients
+    // (Y used directly, no Y-16 offset). We must match this exactly:
+    //   colorimetry = 1:3:5:1 = full-range : BT709 matrix : BT709 transfer : BT709 primaries
+    let capsfilter = make_element("capsfilter", "filter")?;
+    capsfilter.set_property(
+        "caps",
+        gst::Caps::builder("video/x-raw")
+            .field("format", "I420")
+            .field("colorimetry", "1:3:5:1")
+            .build(),
+    );
 
     // H.264 encoder: hardware or software
     let encoder = make_element(encoder_type.element_name(), "encoder")?;
@@ -323,12 +376,12 @@ fn build_pipeline(
         )
         .build();
 
-    // Pipeline: appsrc(BGRx) ! videoconvert ! encoder ! h264parse ! appsink
-    // (no capsfilter — all colorimetry defaults)
+    // Pipeline: appsrc(BGRx) ! videoconvert ! capsfilter(I420 BT.709-full) ! encoder ! h264parse ! appsink
     pipeline
         .add_many([
             appsrc.upcast_ref(),
             &videoconvert,
+            &capsfilter,
             &encoder,
             &h264parse,
             appsink.upcast_ref(),
@@ -338,6 +391,7 @@ fn build_pipeline(
     gst::Element::link_many([
         appsrc.upcast_ref(),
         &videoconvert,
+        &capsfilter,
         &encoder,
         &h264parse,
         appsink.upcast_ref(),
@@ -397,6 +451,12 @@ fn configure_encoder(encoder: &gst::Element, encoder_type: EncoderType, config: 
                 encoder.set_property_from_str("tune", "zerolatency");
                 encoder.set_property_from_str("speed-preset", "ultrafast");
             }
+            // Signal BT.709 full-range in H.264 SPS VUI to match FreeRDP's
+            // prim_YUV decode (BT.709, no Y-16 offset = full range).
+            encoder.set_property_from_str(
+                "option-string",
+                "fullrange=on:colorprim=bt709:transfer=bt709:colormatrix=bt709",
+            );
         }
     }
 
