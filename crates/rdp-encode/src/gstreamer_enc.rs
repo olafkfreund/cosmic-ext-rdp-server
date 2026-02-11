@@ -82,13 +82,9 @@ pub struct GstEncoder {
     appsrc: gst_app::AppSrc,
     appsink: gst_app::AppSink,
     encoder_type: EncoderType,
-    width: u32,
-    height: u32,
     running: bool,
     /// Log negotiated caps once after first successful buffer push.
     caps_logged: bool,
-    /// Dump first raw frame + keyframe to /tmp for color diagnostics.
-    frame_dumped: bool,
 }
 
 impl GstEncoder {
@@ -114,11 +110,8 @@ impl GstEncoder {
             appsrc,
             appsink,
             encoder_type,
-            width: config.width,
-            height: config.height,
             running: false,
             caps_logged: false,
-            frame_dumped: false,
         })
     }
 
@@ -190,22 +183,6 @@ impl GstEncoder {
             .push_buffer(buffer)
             .map_err(|e| EncodeError::PushBuffer(e.to_string()))?;
 
-        // Dump the first raw frame for color diagnostics.
-        if !self.frame_dumped {
-            if let Err(e) = std::fs::write("/tmp/rdp_raw_frame.bgra", frame_data) {
-                tracing::warn!("Frame dump: failed to write raw frame: {e}");
-            } else {
-                tracing::info!(
-                    width = self.width,
-                    height = self.height,
-                    size = frame_data.len(),
-                    "Frame dump: raw BGRx -> /tmp/rdp_raw_frame.bgra \
-                     (view: ffplay -f rawvideo -pixel_format bgra -video_size {}x{} /tmp/rdp_raw_frame.bgra)",
-                    self.width, self.height
-                );
-            }
-        }
-
         // Log negotiated caps once after GStreamer has performed caps
         // negotiation. Caps may not be available until after the first
         // encoded frame is pulled, so only mark as logged when we
@@ -233,22 +210,6 @@ impl GstEncoder {
 
         // Try to pull an encoded frame
         let result = self.pull_encoded_frame()?;
-
-        // Dump first H.264 keyframe for external analysis.
-        if let Some(ref frame) = result {
-            if frame.is_keyframe && !self.frame_dumped {
-                self.frame_dumped = true;
-                if let Err(e) = std::fs::write("/tmp/rdp_h264_keyframe.h264", &frame.data) {
-                    tracing::warn!("Frame dump: failed to write H.264 keyframe: {e}");
-                } else {
-                    tracing::info!(
-                        size = frame.data.len(),
-                        "Frame dump: H.264 keyframe -> /tmp/rdp_h264_keyframe.h264 \
-                         (decode: ffmpeg -i /tmp/rdp_h264_keyframe.h264 -vframes 1 /tmp/rdp_decoded.png)"
-                    );
-                }
-            }
-        }
 
         Ok(result)
     }
