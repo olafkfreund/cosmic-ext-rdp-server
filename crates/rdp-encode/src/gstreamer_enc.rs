@@ -304,23 +304,22 @@ fn build_pipeline(
     // videoconvert: RGB→YUV color space conversion (BGRx → I420).
     let videoconvert = make_element("videoconvert", "convert")?;
 
-    // Capsfilter: force I420 with BT.709 full-range colorimetry.
+    // Capsfilter: force I420 with BT.709 limited-range colorimetry.
     //
-    // FreeRDP's AVC420 decoder (prim_YUV.c) uses BT.709 full-range
-    // coefficients: Cr→R 403/256≈1.574 (BT.709), Cb→B 475/256≈1.856
-    // (BT.709), no Y-16 offset (full range 0-255).
+    // FreeRDP's SSE2-optimized YUV→RGB path (prim_YUV_opt.c) uses
+    // BT.709 limited-range conversion (Y offset 16, scale 255/219).
+    // The generic C path uses full-range, but x86_64 clients always
+    // use the SIMD-optimized path.
     //
-    // Without explicit colorimetry, GStreamer defaults to BT.601 for
-    // I420 output (confirmed via runtime caps logging), causing a
-    // blueish color shift. The string "1:3:5:1" means:
-    //   1 = full range (0-255), 3 = BT.709 matrix,
-    //   5 = BT.709 transfer, 1 = BT.709 primaries
+    // Colorimetry string "2:3:5:1" means:
+    //   2 = limited range (Y: 16-235, CbCr: 16-240),
+    //   3 = BT.709 matrix, 5 = BT.709 transfer, 1 = BT.709 primaries
     let capsfilter = make_element("capsfilter", "colorfix")?;
     capsfilter.set_property(
         "caps",
         gst::Caps::builder("video/x-raw")
             .field("format", "I420")
-            .field("colorimetry", "1:3:5:1")
+            .field("colorimetry", "2:3:5:1")
             .build(),
     );
 
@@ -413,12 +412,11 @@ fn configure_encoder(encoder: &gst::Element, encoder_type: EncoderType, config: 
         EncoderType::Software => {
             encoder.set_property("bitrate", bitrate_kbps);
             encoder.set_property("key-int-max", config.keyframe_interval);
-            // Signal full-range BT.709 in the H.264 VUI parameters so decoders
-            // know the exact color space. Matches our capsfilter colorimetry
-            // (1:3:5:1 = full-range, BT.709 matrix/transfer/primaries).
+            // Signal BT.709 limited-range in the H.264 VUI parameters,
+            // matching our capsfilter colorimetry (2:3:5:1).
             encoder.set_property_from_str(
                 "option-string",
-                "colormatrix=bt709:transfer=bt709:colorprim=bt709:fullrange=on",
+                "colormatrix=bt709:transfer=bt709:colorprim=bt709",
             );
             if config.low_latency {
                 encoder.set_property_from_str("tune", "zerolatency");
