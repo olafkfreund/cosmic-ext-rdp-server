@@ -1501,7 +1501,7 @@ dependencies = [
 
 [[package]]
 name = "cosmic-rdp-broker"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1520,7 +1520,7 @@ dependencies = [
 
 [[package]]
 name = "cosmic-rdp-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1554,7 +1554,7 @@ dependencies = [
 
 [[package]]
 name = "cosmic-rdp-settings"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "i18n-embed 0.15.4",
@@ -6421,7 +6421,7 @@ dependencies = [
 
 [[package]]
 name = "rdp-capture"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ashpd 0.12.1",
  "pipewire",
@@ -6432,7 +6432,7 @@ dependencies = [
 
 [[package]]
 name = "rdp-dbus"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -6446,7 +6446,7 @@ dependencies = [
 
 [[package]]
 name = "rdp-encode"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gstreamer",
  "gstreamer-app",
@@ -6457,7 +6457,7 @@ dependencies = [
 
 [[package]]
 name = "rdp-input"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ashpd 0.12.1",
  "reis",
