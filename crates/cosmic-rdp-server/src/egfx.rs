@@ -65,7 +65,7 @@ fn lock_shared(shared: &SharedEgfx) -> std::sync::MutexGuard<'_, EgfxInner> {
 ///
 /// Per MS-RDPEGFX, all EGFX messages over the DVC channel MUST be wrapped
 /// in ZGFX (RDP8 Bulk Compression). This sends an uncompressed segment:
-/// `[0xE0 (single segment), 0x04 (uncompressed type), raw PDU bytes]`.
+/// `[0xE0 (single segment), 0x00 (no compression), raw PDU bytes]`.
 struct ZgfxWrapped {
     data: Vec<u8>,
 }
@@ -107,7 +107,7 @@ fn zgfx_wrap_messages(messages: Vec<DvcMessage>) -> Vec<DvcMessage> {
             );
             let mut data = Vec::with_capacity(2 + raw.len());
             data.push(0xE0); // ZGFX single segment descriptor
-            data.push(0x04); // RDP8 uncompressed type
+            data.push(0x00); // No compression (flags=0 → raw copy in FreeRDP)
             data.extend_from_slice(&raw);
             tracing::trace!(
                 total_len = data.len(),
