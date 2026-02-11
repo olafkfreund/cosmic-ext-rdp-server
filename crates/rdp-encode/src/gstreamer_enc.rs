@@ -1,6 +1,6 @@
 //! `GStreamer` H.264 encoding pipeline.
 //!
-//! Pipeline: `appsrc ! videoconvert ! capsfilter(I420,BT.601-limited) ! encoder ! h264parse ! appsink`
+//! Pipeline: `appsrc ! videoconvert ! capsfilter(I420,BT.709-full) ! encoder ! h264parse ! appsink`
 //!
 //! Supports hardware-accelerated encoding via VAAPI (Intel/AMD) and
 //! NVENC (NVIDIA), with automatic fallback to x264 software encoding.
@@ -308,7 +308,7 @@ impl Drop for GstEncoder {
 
 /// Build the `GStreamer` encoding pipeline.
 ///
-/// `appsrc ! videoconvert ! capsfilter(I420,BT.601-limited) ! encoder ! h264parse ! appsink`
+/// `appsrc ! videoconvert ! capsfilter(I420,BT.709-full) ! encoder ! h264parse ! appsink`
 fn build_pipeline(
     config: &EncoderConfig,
     encoder_type: EncoderType,
@@ -324,8 +324,12 @@ fn build_pipeline(
 
     // AppSrc: raw video input from PipeWire (BGRx = memory [B, G, R, x]).
     //
-    // No colorimetry is set — GStreamer defaults to BT.709 for HD
-    // resolution, which is correct for desktop content.
+    // CRITICAL: Explicitly set colorimetry to full-range BT.709.
+    // Without this, GStreamer defaults BGRx at HD resolution to LIMITED
+    // range (bt709 = 2:3:5:1), but PipeWire desktop content is full-range
+    // RGB (0-255).  The mismatch causes videoconvert to apply an incorrect
+    // range conversion, producing wrong colors in the H.264 output.
+    //   1:3:5:1 = full-range : BT709 matrix : BT709 transfer : BT709 primaries
     let appsrc = gst_app::AppSrc::builder()
         .name("source")
         .caps(
@@ -334,6 +338,7 @@ fn build_pipeline(
                 .field("width", width)
                 .field("height", height)
                 .field("framerate", gst::Fraction::new(framerate, 1))
+                .field("colorimetry", "1:3:5:1")
                 .build(),
         )
         .format(gst::Format::Time)
@@ -344,18 +349,19 @@ fn build_pipeline(
     // videoconvert: RGB→YUV color space conversion.
     let videoconvert = make_element("videoconvert", "convert")?;
 
-    // Capsfilter: force I420 with BT.601 limited-range colorimetry.
+    // Capsfilter: force I420 with full-range BT.709 colorimetry.
     //
-    // FreeRDP hardcodes BT.601 limited-range coefficients for AVC420
-    // H.264 decode (prim_YUV.c) and ignores H.264 VUI flags entirely.
-    // XRDP also uses BT.601 limited-range with x264.  We MUST match:
-    //   "bt601" = 2:1:4:6 = limited : BT601 matrix : BT601 transfer : SMPTE170M primaries
+    // FreeRDP's prim_YUV.c uses BT.709 full-range coefficients for
+    // AVC420 H.264 decode (256*Y with no Y-16 offset, V→R=403/256=1.574,
+    // U→B=475/256=1.856 — matching BT.709 exactly).
+    // Both AppSrc and capsfilter use 1:3:5:1 so videoconvert performs a
+    // pure format change (BGRx→I420) with no range scaling.
     let capsfilter = make_element("capsfilter", "filter")?;
     capsfilter.set_property(
         "caps",
         gst::Caps::builder("video/x-raw")
             .field("format", "I420")
-            .field("colorimetry", "bt601")
+            .field("colorimetry", "1:3:5:1")
             .build(),
     );
 
@@ -377,7 +383,7 @@ fn build_pipeline(
         )
         .build();
 
-    // Pipeline: appsrc(BGRx) ! videoconvert ! capsfilter(I420 BT.601-limited) ! encoder ! h264parse ! appsink
+    // Pipeline: appsrc(BGRx) ! videoconvert ! capsfilter(I420 BT.709-full) ! encoder ! h264parse ! appsink
     pipeline
         .add_many([
             appsrc.upcast_ref(),
@@ -452,12 +458,11 @@ fn configure_encoder(encoder: &gst::Element, encoder_type: EncoderType, config: 
                 encoder.set_property_from_str("tune", "zerolatency");
                 encoder.set_property_from_str("speed-preset", "ultrafast");
             }
-            // Signal BT.601 limited-range in H.264 SPS VUI.
-            // FreeRDP ignores VUI but this keeps metadata consistent
-            // with the actual BT.601 limited-range encoding.
+            // Signal BT.709 full-range in H.264 SPS VUI to match the
+            // actual encoding (full-range I420 with BT.709 matrix).
             encoder.set_property_from_str(
                 "option-string",
-                "colorprim=bt601:transfer=bt601:colormatrix=bt601",
+                "fullrange=on:colorprim=bt709:transfer=bt709:colormatrix=bt709",
             );
         }
     }
