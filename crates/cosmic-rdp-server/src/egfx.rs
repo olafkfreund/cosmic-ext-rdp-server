@@ -88,35 +88,53 @@ impl Encode for ZgfxWrapped {
 // SAFETY: ZgfxWrapped only contains a Vec<u8> which is Send.
 impl DvcEncode for ZgfxWrapped {}
 
-/// Wrap each outgoing EGFX DVC message in a ZGFX uncompressed segment.
+/// Concatenate and ZGFX-wrap all outgoing EGFX DVC messages into a
+/// single DVC message.
 ///
-/// `FreeRDP` calls `zgfx_decompress()` on every incoming EGFX payload.
-/// Without this wrapper, every frame is rejected with
-/// `zgfx_decompress failure! status: -1`.
-fn zgfx_wrap_messages(messages: Vec<DvcMessage>) -> Vec<DvcMessage> {
-    messages
-        .into_iter()
-        .map(|msg| {
-            let raw_size = msg.size();
-            let raw = encode_vec(msg.as_ref()).unwrap_or_default();
-            tracing::info!(
-                raw_size,
-                encoded_len = raw.len(),
-                first_bytes = ?&raw[..raw.len().min(32)],
-                "EGFX ZGFX: encoding inner DvcMessage"
-            );
-            let mut data = Vec::with_capacity(2 + raw.len());
-            data.push(0xE0); // ZGFX single segment descriptor
-            data.push(0x04); // RDP8 type (0x4), uncompressed (no COMPRESSED flag)
-            data.extend_from_slice(&raw);
-            tracing::info!(
-                total_len = data.len(),
-                first_bytes = ?&data[..data.len().min(32)],
-                "EGFX ZGFX: wrapped message"
-            );
-            Box::new(ZgfxWrapped { data }) as DvcMessage
-        })
-        .collect()
+/// Per MS-RDPEGFX §2.2.2, the server serialises all PDUs for a logical
+/// unit (e.g. `StartFrame` + `WireToSurface1` + `EndFrame`) into a single
+/// `RDP_SEGMENTED_DATA` payload.  `FreeRDP`'s `rdpgfx_on_data_received()`
+/// calls `zgfx_decompress()` **once** on the reassembled DVC buffer and
+/// then iterates over the contained PDUs.  Sending each PDU as a
+/// separate DVC message causes the second and third ZGFX headers to be
+/// misinterpreted as PDU data, triggering `zgfx_decompress failure!`.
+fn zgfx_wrap_messages(messages: &[DvcMessage]) -> Vec<DvcMessage> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+
+    // Concatenate all encoded EGFX PDUs into one byte buffer.
+    let mut combined = Vec::new();
+    for msg in messages {
+        match encode_vec(msg.as_ref()) {
+            Ok(raw) => {
+                tracing::trace!(
+                    encoded_len = raw.len(),
+                    first_bytes = ?&raw[..raw.len().min(16)],
+                    "EGFX ZGFX: encoded inner PDU"
+                );
+                combined.extend_from_slice(&raw);
+            }
+            Err(e) => {
+                tracing::error!(?e, "EGFX ZGFX: failed to encode inner PDU, skipping");
+            }
+        }
+    }
+
+    // Wrap the concatenated PDUs in a single ZGFX uncompressed segment.
+    let mut data = Vec::with_capacity(2 + combined.len());
+    data.push(0xE0); // ZGFX single segment descriptor
+    data.push(0x04); // RDP8 type (0x4), uncompressed (no COMPRESSED flag)
+    data.extend_from_slice(&combined);
+
+    tracing::trace!(
+        pdu_count = messages.len(),
+        total_len = data.len(),
+        "EGFX ZGFX: wrapped {} PDUs into single segment",
+        messages.len()
+    );
+
+    vec![Box::new(ZgfxWrapped { data }) as DvcMessage]
 }
 
 // --------------- Bridge (DvcProcessor) ---------------
@@ -143,7 +161,7 @@ impl DvcProcessor for EgfxBridge {
         tracing::info!(channel_id, "EGFX: DVC channel opened");
         let mut inner = lock_shared(&self.shared);
         inner.dvc_channel_id = Some(channel_id);
-        inner.server.start(channel_id).map(zgfx_wrap_messages)
+        inner.server.start(channel_id).map(|msgs| zgfx_wrap_messages(&msgs))
     }
 
     fn close(&mut self, channel_id: u32) {
@@ -193,7 +211,7 @@ impl DvcProcessor for EgfxBridge {
             }
         }
 
-        Ok(zgfx_wrap_messages(messages))
+        Ok(zgfx_wrap_messages(&messages))
     }
 }
 
@@ -305,7 +323,8 @@ impl EgfxController {
             return false;
         };
 
-        let messages = zgfx_wrap_messages(inner.server.drain_output());
+        let drained = inner.server.drain_output();
+        let messages = zgfx_wrap_messages(&drained);
         let Some(dvc_channel_id) = inner.dvc_channel_id else {
             return false;
         };
@@ -362,7 +381,8 @@ impl EgfxController {
             tracing::error!(width, height, "EGFX: failed to create surface after resize");
         }
 
-        let messages = zgfx_wrap_messages(inner.server.drain_output());
+        let drained = inner.server.drain_output();
+        let messages = zgfx_wrap_messages(&drained);
         let Some(dvc_channel_id) = inner.dvc_channel_id else {
             return;
         };
