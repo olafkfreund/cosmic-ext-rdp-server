@@ -168,8 +168,9 @@ pub struct CaptureConfig {
     /// a single virtual desktop).
     pub multi_monitor: bool,
 
-    /// Swap Red and Blue color channels. Use this if colors look inverted
-    /// (e.g. red looks blue).
+    /// Swap Red and Blue color channels.  Enabled by default because
+    /// COSMIC's xdg-desktop-portal delivers RGBx byte-order data while
+    /// reporting BGRx format.  Set to `false` if colors look inverted.
     pub swap_colors: bool,
 }
 
@@ -247,7 +248,10 @@ impl Default for CaptureConfig {
             fps: 30,
             channel_capacity: 4,
             multi_monitor: false,
-            swap_colors: false,
+            // COSMIC's xdg-desktop-portal delivers RGBx byte-order pixel
+            // data while reporting BGRx format ID.  Default to swapping
+            // R↔B so colors are correct out of the box.
+            swap_colors: true,
         }
     }
 }
