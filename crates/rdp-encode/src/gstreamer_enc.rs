@@ -281,22 +281,15 @@ fn build_pipeline(
 
     let pipeline = gst::Pipeline::new();
 
-    // AppSrc: raw video input from PipeWire.
+    // AppSrc: raw video input from PipeWire (BGRx = memory [B, G, R, x]).
     //
-    // PipeWire delivers BGRx data (memory: [B, G, R, x]), but we declare
-    // `RGBx` to GStreamer. This intentionally swaps the R↔B interpretation
-    // during RGB→YUV conversion, compensating for the R↔B inversion that
-    // FreeRDP's SSE2-optimized YUV→RGB decode path (prim_YUV_opt.c)
-    // introduces when reconstructing pixels for BGRX surfaces.
-    //
-    // Without this swap, both xfreerdp and Remmina display H.264/EGFX
-    // frames with inverted red and blue channels (bitmap fallback is
-    // unaffected because it bypasses the YUV encode/decode chain).
+    // No colorimetry is set — GStreamer defaults to BT.709 for HD
+    // resolution, which is correct for desktop content.
     let appsrc = gst_app::AppSrc::builder()
         .name("source")
         .caps(
             &gst::Caps::builder("video/x-raw")
-                .field("format", "RGBx")
+                .field("format", "BGRx")
                 .field("width", width)
                 .field("height", height)
                 .field("framerate", gst::Fraction::new(framerate, 1))
@@ -307,27 +300,10 @@ fn build_pipeline(
         .do_timestamp(true)
         .build();
 
-    // videoconvert: RGB→YUV color space conversion (RGBx → I420).
+    // videoconvert: RGB→YUV color space conversion.
+    // No capsfilter — let GStreamer auto-negotiate I420 format and
+    // colorimetry with the encoder directly.
     let videoconvert = make_element("videoconvert", "convert")?;
-
-    // Capsfilter: force I420 with BT.709 limited-range colorimetry.
-    //
-    // FreeRDP's SSE2-optimized YUV→RGB path (prim_YUV_opt.c) uses
-    // BT.709 limited-range conversion (Y offset 16, scale 255/219).
-    // The generic C path uses full-range, but x86_64 clients always
-    // use the SIMD-optimized path.
-    //
-    // Colorimetry string "2:3:5:1" means:
-    //   2 = limited range (Y: 16-235, CbCr: 16-240),
-    //   3 = BT.709 matrix, 5 = BT.709 transfer, 1 = BT.709 primaries
-    let capsfilter = make_element("capsfilter", "colorfix")?;
-    capsfilter.set_property(
-        "caps",
-        gst::Caps::builder("video/x-raw")
-            .field("format", "I420")
-            .field("colorimetry", "2:3:5:1")
-            .build(),
-    );
 
     // H.264 encoder: hardware or software
     let encoder = make_element(encoder_type.element_name(), "encoder")?;
@@ -347,12 +323,12 @@ fn build_pipeline(
         )
         .build();
 
-    // Pipeline: appsrc(RGBx) ! videoconvert ! capsfilter(I420 BT.709 limited) ! encoder ! h264parse ! appsink
+    // Pipeline: appsrc(BGRx) ! videoconvert ! encoder ! h264parse ! appsink
+    // (no capsfilter — all colorimetry defaults)
     pipeline
         .add_many([
             appsrc.upcast_ref(),
             &videoconvert,
-            &capsfilter,
             &encoder,
             &h264parse,
             appsink.upcast_ref(),
@@ -362,7 +338,6 @@ fn build_pipeline(
     gst::Element::link_many([
         appsrc.upcast_ref(),
         &videoconvert,
-        &capsfilter,
         &encoder,
         &h264parse,
         appsink.upcast_ref(),
@@ -418,12 +393,6 @@ fn configure_encoder(encoder: &gst::Element, encoder_type: EncoderType, config: 
         EncoderType::Software => {
             encoder.set_property("bitrate", bitrate_kbps);
             encoder.set_property("key-int-max", config.keyframe_interval);
-            // Signal BT.709 limited-range in the H.264 VUI parameters,
-            // matching our capsfilter colorimetry (2:3:5:1).
-            encoder.set_property_from_str(
-                "option-string",
-                "colormatrix=bt709:transfer=bt709:colorprim=bt709",
-            );
             if config.low_latency {
                 encoder.set_property_from_str("tune", "zerolatency");
                 encoder.set_property_from_str("speed-preset", "ultrafast");
