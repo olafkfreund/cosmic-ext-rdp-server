@@ -64,28 +64,35 @@ impl RdpServerInputHandler for LiveInputHandler {
             KeyboardEvent::Released { code, extended } => {
                 self.input.key_release(code, extended);
             }
-            // Unicode key events (e.g. from IME composition or special characters).
+            // Unicode key events: handle common control characters by mapping
+            // them to their corresponding scancode equivalents. Some RDP clients
+            // send keys like Backspace, Tab, Enter, and Escape as Unicode
+            // character events (U+0008, U+0009, U+000D, U+001B) instead of
+            // scancodes, depending on the keyboard input mode.
             //
-            // Full implementation requires one of:
-            //   1. XKB compose sequences (limited to characters in the keymap)
-            //   2. zwp_text_input_v3 Wayland protocol (requires compositor support)
-            //   3. zwp_virtual_keyboard_v1 with a custom keymap containing the codepoint
-            //
-            // All three approaches need significant Wayland protocol work beyond
-            // basic libei input injection. Deferred until compositor-side support
-            // matures (see issue #18).
+            // Arbitrary Unicode character injection (e.g. from IME composition)
+            // requires zwp_text_input_v3 or a custom keymap, which is deferred
+            // until compositor-side support matures (see issue #18).
             KeyboardEvent::UnicodePressed(codepoint) => {
-                tracing::debug!(
-                    codepoint,
-                    char = %char::from_u32(u32::from(codepoint)).unwrap_or('\u{FFFD}'),
-                    "Unicode key press ignored (not yet supported)"
-                );
+                if let Some((code, extended)) = unicode_to_scancode(codepoint) {
+                    self.input.key_press(code, extended);
+                } else {
+                    tracing::debug!(
+                        codepoint,
+                        char = %char::from_u32(u32::from(codepoint)).unwrap_or('\u{FFFD}'),
+                        "Unicode key press ignored (not yet supported)"
+                    );
+                }
             }
             KeyboardEvent::UnicodeReleased(codepoint) => {
-                tracing::trace!(
-                    codepoint,
-                    "Unicode key release ignored (not yet supported)"
-                );
+                if let Some((code, extended)) = unicode_to_scancode(codepoint) {
+                    self.input.key_release(code, extended);
+                } else {
+                    tracing::trace!(
+                        codepoint,
+                        "Unicode key release ignored (not yet supported)"
+                    );
+                }
             }
             KeyboardEvent::Synchronize(flags) => {
                 let caps = flags.contains(SynchronizeFlags::CAPS_LOCK);
@@ -141,6 +148,26 @@ impl RdpServerInputHandler for LiveInputHandler {
                 self.input.scroll(x, y);
             }
         }
+    }
+}
+
+/// Map a Unicode codepoint to its equivalent RDP XT scancode.
+///
+/// Some RDP clients send control keys as Unicode character events instead
+/// of scancodes. This maps the common control characters back to their
+/// XT scancode + extended flag so they can be injected through the normal
+/// keycode path.
+///
+/// Returns `(code, extended)` or `None` if the codepoint has no scancode
+/// equivalent.
+const fn unicode_to_scancode(codepoint: u16) -> Option<(u8, bool)> {
+    match codepoint {
+        0x0008 => Some((0x0E, false)), // Backspace
+        0x0009 => Some((0x0F, false)), // Tab
+        0x000D => Some((0x1C, false)), // Enter / Carriage Return
+        0x001B => Some((0x01, false)), // Escape
+        0x007F => Some((0x53, true)),  // Delete (extended)
+        _ => None,
     }
 }
 

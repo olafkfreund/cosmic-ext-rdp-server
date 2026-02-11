@@ -174,9 +174,10 @@ impl EiInput {
             return;
         }
         let Some(evdev) = rdp_scancode_to_evdev(code, extended) else {
-            tracing::debug!(code, extended, "Unmapped scancode (press)");
+            tracing::warn!(code, extended, "Unmapped RDP scancode (press)");
             return;
         };
+        tracing::trace!(code, extended, evdev, "Key press");
         self.ensure_emulating();
         // ei protocol uses evdev keycodes minus 8 (XKB offset)
         if let Some(ref keyboard) = self.keyboard {
@@ -246,9 +247,10 @@ impl EiInput {
             return;
         }
         let Some(evdev) = rdp_scancode_to_evdev(code, extended) else {
-            tracing::debug!(code, extended, "Unmapped scancode (release)");
+            tracing::warn!(code, extended, "Unmapped RDP scancode (release)");
             return;
         };
+        tracing::trace!(code, extended, evdev, "Key release");
         self.ensure_emulating();
         if let Some(ref keyboard) = self.keyboard {
             keyboard.key(u32::from(evdev) - 8, ei::keyboard::KeyState::Released);
