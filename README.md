@@ -4,9 +4,26 @@ RDP server for the [COSMIC Desktop Environment](https://github.com/pop-os/cosmic
 
 Part of the [COSMIC Remote Desktop stack](#full-remote-desktop-stack) - works together with [xdg-desktop-portal-cosmic](https://github.com/olafkfreund/xdg-desktop-portal-cosmic) (portal) and [cosmic-comp-rdp](https://github.com/olafkfreund/cosmic-comp-rdp) (compositor) for full remote desktop functionality.
 
+## Screenshots
+
+### RDP Session (FreeRDP connected to COSMIC Desktop)
+
+![RDP Session](docs/screenshots/rdp-session.png)
+
+### COSMIC RDP Server Settings GUI
+
+| General | Security |
+|---------|----------|
+| ![General Settings](docs/screenshots/settings-general.png) | ![Security Settings](docs/screenshots/settings-security.png) |
+
+| Display | Features |
+|---------|----------|
+| ![Display Settings](docs/screenshots/settings-display.png) | ![Features Settings](docs/screenshots/settings-features.png) |
+
 ## Features
 
 - **Live screen capture** via the ScreenCast XDG portal and PipeWire
+- **H.264 streaming** via EGFX/AVC420 Dynamic Virtual Channel (10-50x bandwidth reduction vs raw bitmap, with automatic bitmap fallback for clients without EGFX support)
 - **Keyboard and mouse injection** via reis/libei (direct libei protocol)
 - **Clipboard sharing** (text) between local and remote sessions via CLIPRDR
 - **Audio forwarding** from the desktop to the RDP client via RDPSND + PipeWire
@@ -15,7 +32,7 @@ Part of the [COSMIC Remote Desktop stack](#full-remote-desktop-stack) - works to
 - **Lock key synchronization** (Caps Lock, Num Lock, Scroll Lock state sync)
 - **NLA authentication** via CredSSP (optional)
 - **TLS encryption** with self-signed certificates or user-provided PEM files
-- **H.264 streaming** via EGFX/AVC420 Dynamic Virtual Channel (10-50x bandwidth reduction vs raw bitmap, with automatic bitmap fallback for clients without EGFX support)
+- **Hardware-accelerated encoding** with VAAPI (Intel/AMD) and NVENC (NVIDIA) support, automatic fallback to x264 software encoding
 - **COSMIC Settings GUI** for configuration management via D-Bus IPC
 - **NixOS module** with systemd service, firewall integration, and secrets management
 - **Home Manager module** for user-level installation
@@ -26,7 +43,7 @@ Part of the [COSMIC Remote Desktop stack](#full-remote-desktop-stack) - works to
 
 ### Crate overview
 
-Workspace with 6 crates:
+Workspace with 6 crates (v0.2.0):
 
 | Crate | Purpose |
 |-------|---------|
@@ -53,6 +70,18 @@ cosmic-rdp-server (this repo)
     v
 ironrdp-server (RDP protocol)
 ```
+
+### H.264 encoding pipeline
+
+```
+PipeWire (BGRx/BGRA) --> R/B swap --> GStreamer appsrc (BGRx, BT.709 full-range)
+    --> videoconvert --> capsfilter (I420, BT.709 full-range)
+    --> encoder (VAAPI/NVENC/x264) --> h264parse
+    --> appsink (byte-stream, AU aligned)
+    --> EGFX AVC420 PDU --> ZGFX compression --> DVC channel --> FreeRDP client
+```
+
+The encoder auto-detects hardware acceleration in priority order: VAAPI (Intel/AMD) > NVENC (NVIDIA) > x264 (software fallback).
 
 ### D-Bus interfaces
 
@@ -149,7 +178,7 @@ Create a `PKGBUILD`:
 ```bash
 # Maintainer: Your Name <you@example.com>
 pkgname=cosmic-rdp-server
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="RDP server for the COSMIC Desktop Environment"
 arch=('x86_64' 'aarch64')
@@ -234,11 +263,14 @@ override_dh_auto_install:
 
 **`debian/changelog`:**
 ```
-cosmic-rdp-server (0.1.0-1) unstable; urgency=medium
+cosmic-rdp-server (0.2.0-1) unstable; urgency=medium
 
-  * Initial release.
+  * H.264 EGFX streaming with correct colors.
+  * Hardware-accelerated encoding (VAAPI/NVENC).
+  * COSMIC Settings GUI.
+  * NixOS and Home Manager modules.
 
- -- Your Name <you@example.com>  Mon, 10 Feb 2026 00:00:00 +0000
+ -- Your Name <you@example.com>  Tue, 11 Feb 2026 00:00:00 +0000
 ```
 
 **`debian/source/format`:**
@@ -284,18 +316,22 @@ cosmic-rdp-server --static-display
 | `--key <PATH>` | TLS private key file (PEM format) |
 | `--config`, `-c <PATH>` | Configuration file (TOML) |
 | `--static-display` | Use a static blue screen instead of live capture |
+| `--swap-colors` | Force R/B channel swap (usually not needed, auto-detected) |
 
 ### Connecting from a client
 
 ```bash
-# FreeRDP (Linux)
-xfreerdp /v:hostname:3389 /cert:ignore
+# FreeRDP with H.264 EGFX (recommended - best quality and bandwidth)
+xfreerdp /v:hostname:3389 /cert:ignore /gfx:avc420
 
 # FreeRDP with NLA authentication
-xfreerdp /v:hostname:3389 /u:myuser /p:mypassword /cert:ignore
+xfreerdp /v:hostname:3389 /u:myuser /p:mypassword /sec:nla /cert:ignore /gfx:avc420
 
 # FreeRDP with dynamic resize
 xfreerdp /v:hostname:3389 /cert:ignore /dynamic-resolution
+
+# FreeRDP without EGFX (bitmap fallback)
+xfreerdp /v:hostname:3389 /cert:ignore /gfx:off
 
 # Remmina (Linux GUI)
 # Create a new RDP connection, set Server to hostname:3389
@@ -333,6 +369,7 @@ password = ""
 fps = 30
 channel_capacity = 4
 multi_monitor = false
+swap_colors = true    # R/B channel swap for COSMIC portal (default: true)
 
 # Video encoding
 [encode]
@@ -369,6 +406,7 @@ channels = 2
 | `fps` | int | `30` | Target frames per second |
 | `channel_capacity` | int | `4` | PipeWire frame buffer depth |
 | `multi_monitor` | bool | `false` | Merge all monitors into a single virtual desktop |
+| `swap_colors` | bool | `true` | Swap R/B channels (needed for COSMIC portal pixel format) |
 
 #### `[encode]` - Video Encoding
 
@@ -726,6 +764,12 @@ RUST_LOG=rdp_capture=trace,rdp_input=debug cosmic-rdp-server
 - Check the server is running: `systemctl --user status cosmic-rdp-server`
 - Check firewall rules: port 3389 (or custom port) must be open
 - For NixOS: set `openFirewall = true` in the module configuration
+
+### Wrong colors (red/blue swapped)
+
+- The `swap_colors` option defaults to `true` for COSMIC Desktop
+- If colors appear inverted, try setting `swap_colors = false` in `[capture]`
+- This is needed because COSMIC's portal reports BGRx format but delivers RGBx byte order
 
 ### Audio not working
 
