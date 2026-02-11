@@ -43,6 +43,10 @@ struct Cli {
     /// Use a static blue screen instead of live capture (for testing).
     #[arg(long)]
     static_display: bool,
+
+    /// Swap Red and Blue color channels (use if colors look inverted).
+    #[arg(long)]
+    swap_colors: bool,
 }
 
 #[tokio::main]
@@ -162,6 +166,9 @@ fn load_and_merge_config(cli: &Cli) -> Result<config::ServerConfig> {
     if cli.static_display {
         cfg.static_display = true;
     }
+    if cli.swap_colors {
+        cfg.capture.swap_colors = true;
+    }
 
     match (&cfg.cert_path, &cfg.key_path) {
         (Some(_), None) => bail!("--cert requires --key (or set key_path in config)"),
@@ -218,7 +225,9 @@ async fn run_live_or_fallback(
     make_sound: &dyn Fn() -> Option<Box<dyn ironrdp_server::SoundServerFactory>>,
     dbus_cmd_rx: &mut tokio::sync::mpsc::Receiver<rdp_dbus::server::DaemonCommand>,
 ) -> Result<ShutdownReason> {
-    match rdp_capture::start_capture(None, cfg.capture.channel_capacity).await {
+    match rdp_capture::start_capture(None, cfg.capture.channel_capacity, cfg.capture.swap_colors)
+        .await
+    {
         Ok((capture_handle, event_rx, desktop_info)) => {
             tracing::info!(
                 width = desktop_info.width,

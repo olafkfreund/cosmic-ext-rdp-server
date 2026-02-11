@@ -58,6 +58,7 @@ pub struct CaptureHandle {
 pub async fn start_capture(
     restore_token: Option<&str>,
     channel_capacity: usize,
+    swap_colors: bool,
 ) -> Result<(CaptureHandle, mpsc::Receiver<CaptureEvent>, DesktopInfo), CaptureError> {
     let portal_session = start_screencast(restore_token, true, false)
         .await
@@ -85,8 +86,9 @@ pub async fn start_capture(
         pipewire_fd,
     } = portal_session;
 
-    let (pw_stream, frame_rx) = PwStream::start(pipewire_fd, info.node_id, channel_capacity)
-        .map_err(CaptureError::PipeWire)?;
+    let (pw_stream, frame_rx) =
+        PwStream::start(pipewire_fd, info.node_id, channel_capacity, swap_colors)
+            .map_err(CaptureError::PipeWire)?;
 
     let handle = CaptureHandle {
         _session: session,

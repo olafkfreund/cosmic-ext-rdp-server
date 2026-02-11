@@ -167,6 +167,10 @@ pub struct CaptureConfig {
     /// Enable multi-monitor capture (merges all selected monitors into
     /// a single virtual desktop).
     pub multi_monitor: bool,
+
+    /// Swap Red and Blue color channels. Use this if colors look inverted
+    /// (e.g. red looks blue).
+    pub swap_colors: bool,
 }
 
 /// Audio forwarding settings.
@@ -243,6 +247,7 @@ impl Default for CaptureConfig {
             fps: 30,
             channel_capacity: 4,
             multi_monitor: false,
+            swap_colors: false,
         }
     }
 }

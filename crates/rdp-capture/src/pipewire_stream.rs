@@ -32,6 +32,7 @@ impl PwStream {
         pipewire_fd: OwnedFd,
         node_id: u32,
         channel_capacity: usize,
+        swap_colors: bool,
     ) -> Result<(Self, mpsc::Receiver<CaptureEvent>), PwError> {
         let (tx, rx) = mpsc::channel(channel_capacity);
         let running = Arc::new(AtomicBool::new(true));
@@ -40,7 +41,9 @@ impl PwStream {
         let thread = std::thread::Builder::new()
             .name("pw-capture".into())
             .spawn(move || {
-                if let Err(e) = run_pipewire_loop(pipewire_fd, node_id, tx, running_clone) {
+                if let Err(e) =
+                    run_pipewire_loop(pipewire_fd, node_id, tx, running_clone, swap_colors)
+                {
                     tracing::error!("PipeWire thread exited with error: {e}");
                 }
             })
@@ -77,6 +80,7 @@ fn run_pipewire_loop(
     node_id: u32,
     frame_tx: mpsc::Sender<CaptureEvent>,
     running: Arc<AtomicBool>,
+    swap_colors: bool,
 ) -> Result<(), PwError> {
     pw::init();
 
@@ -132,7 +136,7 @@ fn run_pipewire_loop(
             }
         })
         .process(move |stream_ref, tx| {
-            process_frame(stream_ref, tx, &seq, &negotiated_format);
+            process_frame(stream_ref, tx, &seq, &negotiated_format, swap_colors);
         })
         .register()
         .map_err(|_| PwError::RegisterListener)?;
@@ -228,6 +232,7 @@ fn process_frame(
     tx: &mut mpsc::Sender<CaptureEvent>,
     seq: &AtomicU64,
     negotiated_format: &AtomicU32,
+    swap_colors: bool,
 ) {
     // Dequeue buffer using raw API for SPA metadata access.
     // Safety: stream is valid within the process callback.
@@ -327,9 +332,9 @@ fn process_frame(
 
     let is_rgb_order = fmt == pw::spa::param::video::VideoFormat::RGBx.as_raw()
         || fmt == pw::spa::param::video::VideoFormat::RGBA.as_raw();
-    if is_rgb_order {
+    if is_rgb_order ^ swap_colors {
         for pixel in frame_data.chunks_exact_mut(4) {
-            pixel.swap(0, 2); // R,G,B,A -> B,G,R,A
+            pixel.swap(0, 2); // R,G,B,A -> B,G,R,A  (or force swap when override set)
         }
     }
 

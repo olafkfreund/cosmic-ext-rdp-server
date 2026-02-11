@@ -61,11 +61,13 @@ fn lock_shared(shared: &SharedEgfx) -> std::sync::MutexGuard<'_, EgfxInner> {
 
 // --------------- ZGFX compression wrapper ---------------
 
-/// ZGFX-wrapped DVC message (uncompressed single segment).
+/// ZGFX-wrapped DVC message.
 ///
 /// Per MS-RDPEGFX, all EGFX messages over the DVC channel MUST be wrapped
-/// in ZGFX (RDP8 Bulk Compression). This sends an uncompressed segment:
-/// `[0xE0 (single segment), 0x04 (RDP8 type, uncompressed), raw PDU bytes]`.
+/// in ZGFX (`RDP_SEGMENTED_DATA`). Small payloads (≤ 65534 bytes) use the
+/// SINGLE descriptor (`0xE0`). Larger payloads MUST use MULTIPART (`0xE1`)
+/// because `FreeRDP` allocates a 65 536-byte output buffer per segment in
+/// `zgfx_decompress_segment`—exceeding this limit causes `status: -1`.
 struct ZgfxWrapped {
     data: Vec<u8>,
 }
@@ -88,16 +90,24 @@ impl Encode for ZgfxWrapped {
 // SAFETY: ZgfxWrapped only contains a Vec<u8> which is Send.
 impl DvcEncode for ZgfxWrapped {}
 
+/// Maximum uncompressed data per ZGFX segment (excluding the 1-byte
+/// flags/type prefix). `FreeRDP`'s `zgfx_decompress_segment` uses a
+/// 65 536-byte output buffer, so each segment must decompress to at most
+/// that many bytes. The 1-byte `BulkEncodedData` header (`0x04`) is
+/// included in the segment size field, leaving 65 534 bytes for data.
+const ZGFX_MAX_SEGMENT_DATA: usize = 65534;
+
 /// Concatenate and ZGFX-wrap all outgoing EGFX DVC messages into a
 /// single DVC message.
 ///
 /// Per MS-RDPEGFX §2.2.2, the server serialises all PDUs for a logical
 /// unit (e.g. `StartFrame` + `WireToSurface1` + `EndFrame`) into a single
-/// `RDP_SEGMENTED_DATA` payload.  `FreeRDP`'s `rdpgfx_on_data_received()`
+/// `RDP_SEGMENTED_DATA` payload. `FreeRDP`'s `rdpgfx_on_data_received()`
 /// calls `zgfx_decompress()` **once** on the reassembled DVC buffer and
-/// then iterates over the contained PDUs.  Sending each PDU as a
-/// separate DVC message causes the second and third ZGFX headers to be
-/// misinterpreted as PDU data, triggering `zgfx_decompress failure!`.
+/// then iterates over the contained PDUs.
+///
+/// For payloads ≤ 65 534 bytes we emit a SINGLE segment (`0xE0`).
+/// For larger payloads we emit MULTIPART (`0xE1`) with 65 534-byte chunks.
 fn zgfx_wrap_messages(messages: &[DvcMessage]) -> Vec<DvcMessage> {
     if messages.is_empty() {
         return Vec::new();
@@ -110,7 +120,6 @@ fn zgfx_wrap_messages(messages: &[DvcMessage]) -> Vec<DvcMessage> {
             Ok(raw) => {
                 tracing::trace!(
                     encoded_len = raw.len(),
-                    first_bytes = ?&raw[..raw.len().min(16)],
                     "EGFX ZGFX: encoded inner PDU"
                 );
                 combined.extend_from_slice(&raw);
@@ -121,20 +130,68 @@ fn zgfx_wrap_messages(messages: &[DvcMessage]) -> Vec<DvcMessage> {
         }
     }
 
-    // Wrap the concatenated PDUs in a single ZGFX uncompressed segment.
-    let mut data = Vec::with_capacity(2 + combined.len());
-    data.push(0xE0); // ZGFX single segment descriptor
-    data.push(0x04); // RDP8 type (0x4), uncompressed (no COMPRESSED flag)
-    data.extend_from_slice(&combined);
+    let data = if combined.len() <= ZGFX_MAX_SEGMENT_DATA {
+        // Small payload: SINGLE segment [0xE0, flags|type, data...]
+        let mut buf = Vec::with_capacity(2 + combined.len());
+        buf.push(0xE0); // ZGFX_SEGMENTED_SINGLE
+        buf.push(0x04); // RDP8 type (0x4), uncompressed
+        buf.extend_from_slice(&combined);
+        buf
+    } else {
+        // Large payload: MULTIPART segments, each ≤ ZGFX_MAX_SEGMENT_DATA.
+        zgfx_build_multipart(&combined)
+    };
 
     tracing::trace!(
         pdu_count = messages.len(),
-        total_len = data.len(),
-        "EGFX ZGFX: wrapped {} PDUs into single segment",
+        payload_len = combined.len(),
+        zgfx_len = data.len(),
+        multipart = combined.len() > ZGFX_MAX_SEGMENT_DATA,
+        "EGFX ZGFX: wrapped {} PDUs",
         messages.len()
     );
 
     vec![Box::new(ZgfxWrapped { data }) as DvcMessage]
+}
+
+/// Build a ZGFX MULTIPART (`0xE1`) payload from raw uncompressed data.
+///
+/// Format (all integers little-endian):
+/// ```text
+/// 0xE1                              // descriptor
+/// segment_count  : u16              // number of segments
+/// uncompressed_size : u32           // total uncompressed output size
+/// for each segment:
+///   segment_size : u32              // size of BulkEncodedData (1 + data_len)
+///   0x04                            // flags|type: RDP8, uncompressed
+///   data[data_len]                  // raw PDU bytes for this segment
+/// ```
+fn zgfx_build_multipart(payload: &[u8]) -> Vec<u8> {
+    let chunks: Vec<&[u8]> = payload.chunks(ZGFX_MAX_SEGMENT_DATA).collect();
+
+    #[allow(clippy::cast_possible_truncation)]
+    let segment_count = chunks.len() as u16;
+    #[allow(clippy::cast_possible_truncation)]
+    let uncompressed_size = payload.len() as u32;
+
+    // Header: 1 (descriptor) + 2 (count) + 4 (uncomp size)
+    // Per segment: 4 (seg size) + 1 (flags) + data_len
+    let total_size = 7 + chunks.iter().map(|c| 5 + c.len()).sum::<usize>();
+    let mut buf = Vec::with_capacity(total_size);
+
+    buf.push(0xE1); // ZGFX_SEGMENTED_MULTIPART
+    buf.extend_from_slice(&segment_count.to_le_bytes());
+    buf.extend_from_slice(&uncompressed_size.to_le_bytes());
+
+    for chunk in &chunks {
+        #[allow(clippy::cast_possible_truncation)]
+        let seg_size = (1 + chunk.len()) as u32; // 1 byte flags + data
+        buf.extend_from_slice(&seg_size.to_le_bytes());
+        buf.push(0x04); // RDP8 type (0x4), uncompressed
+        buf.extend_from_slice(chunk);
+    }
+
+    buf
 }
 
 // --------------- Bridge (DvcProcessor) ---------------

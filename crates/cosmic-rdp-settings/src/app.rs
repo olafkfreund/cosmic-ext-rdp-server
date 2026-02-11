@@ -198,6 +198,7 @@ impl App {
                 fps: self.fps.parse().unwrap_or(30),
                 channel_capacity: self.buffer_capacity.parse().unwrap_or(4),
                 multi_monitor: self.multi_monitor,
+                swap_colors: false,
             },
             encode: rdp_dbus::config::EncodeConfig {
                 encoder,
