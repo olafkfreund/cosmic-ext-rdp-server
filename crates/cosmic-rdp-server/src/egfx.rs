@@ -21,8 +21,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use ironrdp_core::impl_as_any;
-use ironrdp_dvc::{DvcMessage, DvcProcessor, DvcServerProcessor};
+use ironrdp_core::{encode_vec, impl_as_any, Encode, WriteCursor};
+use ironrdp_dvc::{DvcEncode, DvcMessage, DvcProcessor, DvcServerProcessor};
 use ironrdp_egfx::pdu::{Avc420Region, CapabilitiesAdvertisePdu, CapabilitySet};
 use ironrdp_egfx::server::{GraphicsPipelineHandler, GraphicsPipelineServer};
 use ironrdp_pdu::PduResult;
@@ -43,6 +43,9 @@ struct EgfxInner {
     width: u16,
     height: u16,
     event_tx: Option<mpsc::UnboundedSender<ServerEvent>>,
+    /// Set `true` after `resize()` so the encoder forces an IDR keyframe
+    /// on the next frame, ensuring the client can decode immediately.
+    needs_keyframe: bool,
 }
 
 /// Thread-safe shared EGFX state.
@@ -54,6 +57,54 @@ fn lock_shared(shared: &SharedEgfx) -> std::sync::MutexGuard<'_, EgfxInner> {
         tracing::warn!("EGFX: mutex was poisoned, recovering (possible inconsistency)");
         e.into_inner()
     })
+}
+
+// --------------- ZGFX compression wrapper ---------------
+
+/// ZGFX-wrapped DVC message (uncompressed single segment).
+///
+/// Per MS-RDPEGFX, all EGFX messages over the DVC channel MUST be wrapped
+/// in ZGFX (RDP8 Bulk Compression). This sends an uncompressed segment:
+/// `[0xE0 (single segment), 0x04 (uncompressed type), raw PDU bytes]`.
+struct ZgfxWrapped {
+    data: Vec<u8>,
+}
+
+impl Encode for ZgfxWrapped {
+    fn encode(&self, dst: &mut WriteCursor<'_>) -> ironrdp_core::EncodeResult<()> {
+        dst.write_slice(&self.data);
+        Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "ZgfxWrapped"
+    }
+
+    fn size(&self) -> usize {
+        self.data.len()
+    }
+}
+
+// SAFETY: ZgfxWrapped only contains a Vec<u8> which is Send.
+impl DvcEncode for ZgfxWrapped {}
+
+/// Wrap each outgoing EGFX DVC message in a ZGFX uncompressed segment.
+///
+/// `FreeRDP` calls `zgfx_decompress()` on every incoming EGFX payload.
+/// Without this wrapper, every frame is rejected with
+/// `zgfx_decompress failure! status: -1`.
+fn zgfx_wrap_messages(messages: Vec<DvcMessage>) -> Vec<DvcMessage> {
+    messages
+        .into_iter()
+        .map(|msg| {
+            let raw = encode_vec(msg.as_ref()).unwrap_or_default();
+            let mut data = Vec::with_capacity(2 + raw.len());
+            data.push(0xE0); // ZGFX single segment descriptor
+            data.push(0x04); // RDP8 uncompressed type
+            data.extend_from_slice(&raw);
+            Box::new(ZgfxWrapped { data }) as DvcMessage
+        })
+        .collect()
 }
 
 // --------------- Bridge (DvcProcessor) ---------------
@@ -80,7 +131,7 @@ impl DvcProcessor for EgfxBridge {
         tracing::info!(channel_id, "EGFX: DVC channel opened");
         let mut inner = lock_shared(&self.shared);
         inner.dvc_channel_id = Some(channel_id);
-        inner.server.start(channel_id)
+        inner.server.start(channel_id).map(zgfx_wrap_messages)
     }
 
     fn close(&mut self, channel_id: u32) {
@@ -120,7 +171,7 @@ impl DvcProcessor for EgfxBridge {
             }
         }
 
-        Ok(messages)
+        Ok(zgfx_wrap_messages(messages))
     }
 }
 
@@ -134,11 +185,41 @@ impl DvcServerProcessor for EgfxBridge {}
 /// The server event sender is stored in the shared `EgfxInner` state,
 /// so it can be set via [`EgfxEventSetter`] after `RdpServer` construction
 /// while the controller has already been moved into the display handler.
+///
+/// Cloning is cheap (wraps `Arc<Mutex<..>>`), allowing the controller
+/// to be shared between `LiveDisplay` (for `request_layout`) and
+/// `LiveDisplayUpdates` (for frame delivery).
+#[derive(Clone)]
 pub struct EgfxController {
     shared: SharedEgfx,
 }
 
 impl EgfxController {
+    /// Reset EGFX state for a new RDP connection.
+    ///
+    /// ironrdp-server does not always call `DvcProcessor::close()` when a
+    /// client disconnects, leaving stale `ready` / `supports_avc420` flags.
+    /// Call this when acquiring display channels for a new connection so the
+    /// EGFX handshake starts fresh.
+    pub fn reset(&self) {
+        let mut inner = lock_shared(&self.shared);
+        inner.ready = false;
+        inner.surface_id = None;
+        inner.supports_avc420 = false;
+        inner.needs_keyframe = false;
+        tracing::debug!("EGFX: state reset for new connection");
+    }
+
+    /// Take and clear the `needs_keyframe` flag.
+    ///
+    /// Returns `true` if a keyframe should be forced (e.g. after resize),
+    /// and resets the flag to `false`.
+    #[must_use]
+    pub fn take_needs_keyframe(&self) -> bool {
+        let mut inner = lock_shared(&self.shared);
+        std::mem::take(&mut inner.needs_keyframe)
+    }
+
     /// Whether the EGFX channel is ready to accept H.264 frames.
     #[must_use]
     pub fn is_ready(&self) -> bool {
@@ -197,7 +278,7 @@ impl EgfxController {
             return false;
         };
 
-        let messages = inner.server.drain_output();
+        let messages = zgfx_wrap_messages(inner.server.drain_output());
         let Some(dvc_channel_id) = inner.dvc_channel_id else {
             return false;
         };
@@ -242,6 +323,7 @@ impl EgfxController {
 
         inner.width = width;
         inner.height = height;
+        inner.needs_keyframe = true;
 
         inner.server.resize(width, height);
 
@@ -253,7 +335,7 @@ impl EgfxController {
             tracing::error!(width, height, "EGFX: failed to create surface after resize");
         }
 
-        let messages = inner.server.drain_output();
+        let messages = zgfx_wrap_messages(inner.server.drain_output());
         let Some(dvc_channel_id) = inner.dvc_channel_id else {
             return;
         };
@@ -314,6 +396,7 @@ pub fn create_egfx(
         width,
         height,
         event_tx: None,
+        needs_keyframe: false,
     }));
 
     let bridge = EgfxBridge {
