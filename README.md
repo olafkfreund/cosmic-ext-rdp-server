@@ -1,6 +1,6 @@
 # cosmic-rdp-server
 
-RDP server for the [COSMIC Desktop Environment](https://github.com/pop-os/cosmic-epoch). Allows remote desktop access to COSMIC sessions using standard RDP clients such as Windows Remote Desktop (`mstsc.exe`), FreeRDP, and Remmina.
+Multi-user RDP server for the [COSMIC Desktop Environment](https://github.com/pop-os/cosmic-epoch). Provides concurrent remote desktop access for multiple users with per-session isolation, PAM authentication, and automatic session lifecycle management. Supports standard RDP clients such as Windows Remote Desktop (`mstsc.exe`), FreeRDP, and Remmina.
 
 Part of the [COSMIC Remote Desktop stack](#full-remote-desktop-stack) - works together with [xdg-desktop-portal-cosmic](https://github.com/olafkfreund/xdg-desktop-portal-cosmic) (portal) and [cosmic-comp-rdp](https://github.com/olafkfreund/cosmic-comp-rdp) (compositor) for full remote desktop functionality.
 
@@ -22,6 +22,7 @@ Part of the [COSMIC Remote Desktop stack](#full-remote-desktop-stack) - works to
 
 ## Features
 
+- **Multi-user multi-session** via the session broker — multiple RDP clients connect simultaneously, each user gets their own isolated desktop session
 - **Live screen capture** via the ScreenCast XDG portal and PipeWire
 - **H.264 streaming** via EGFX/AVC420 Dynamic Virtual Channel (10-50x bandwidth reduction vs raw bitmap, with automatic bitmap fallback for clients without EGFX support)
 - **Keyboard and mouse injection** via reis/libei (direct libei protocol)
@@ -30,9 +31,11 @@ Part of the [COSMIC Remote Desktop stack](#full-remote-desktop-stack) - works to
 - **Dynamic display resize** when the client window changes size
 - **Cursor shape forwarding** (position, RGBA bitmap, hide/show)
 - **Lock key synchronization** (Caps Lock, Num Lock, Scroll Lock state sync)
-- **NLA authentication** via CredSSP (optional)
+- **PAM authentication** via the session broker, with per-user session isolation
+- **NLA authentication** via CredSSP (optional, for single-user mode)
 - **TLS encryption** with self-signed certificates or user-provided PEM files
 - **Hardware-accelerated encoding** with VAAPI (Intel/AMD) and NVENC (NVIDIA) support, automatic fallback to x264 software encoding
+- **Session lifecycle management** with idle timeout, reconnection, and state persistence across broker restarts
 - **COSMIC Settings GUI** for configuration management via D-Bus IPC
 - **NixOS module** with systemd service, firewall integration, and secrets management
 - **Home Manager module** for user-level installation
@@ -43,24 +46,48 @@ Part of the [COSMIC Remote Desktop stack](#full-remote-desktop-stack) - works to
 
 ### Crate overview
 
-Workspace with 6 crates (v0.2.0):
+Workspace with 7 crates (v0.3.0):
 
 | Crate | Purpose |
 |-------|---------|
-| `cosmic-rdp-server` | Main daemon: CLI, config, TLS, D-Bus server, orchestration |
+| `cosmic-rdp-server` | Per-user daemon: CLI, config, TLS, D-Bus server, orchestration |
+| `cosmic-rdp-broker` | Multi-user session broker: TCP proxy, PAM auth, session lifecycle |
 | `cosmic-rdp-settings` | COSMIC Settings GUI: config editor, D-Bus status, nav pages |
 | `rdp-dbus` | Shared D-Bus types, config structs, client/server proxy |
 | `rdp-capture` | Screen capture via ScreenCast portal + PipeWire |
 | `rdp-input` | Input injection via reis/libei (direct libei protocol) |
 | `rdp-encode` | Video encoding via GStreamer (H.264) + bitmap fallback |
 
-### Data flow
+### Multi-user architecture
+
+The session broker accepts all RDP connections on port 3389, authenticates users via PAM, and spawns isolated per-user `cosmic-rdp-server` instances:
+
+```
+RDP Client A ──┐
+RDP Client B ──┤  TCP :3389
+RDP Client C ──┘
+       │
+       ▼
+cosmic-rdp-broker (system service, root)
+       ├── Read X.224 Connection Request → extract cookie username
+       ├── PAM authentication
+       ├── Spawn per-user server via systemd-run
+       └── TCP proxy (bidirectional byte-level forwarding)
+            │
+            ├── cosmic-rdp-server :3390 (user A's session)
+            ├── cosmic-rdp-server :3391 (user B's session)
+            └── cosmic-rdp-server :3392 (user C's session)
+```
+
+Each per-user server inherits the user's environment (WAYLAND_DISPLAY, XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS) so all portals and PipeWire work transparently.
+
+### Per-user data flow
 
 ```
 RDP Client
     |
     v
-cosmic-rdp-server (this repo)
+cosmic-rdp-server (per-user daemon)
     |
     |-- ScreenCast portal --> PipeWire --> rdp-capture --> rdp-encode --> EGFX H.264 or bitmap
     |-- RemoteDesktop portal --> EIS socket --> rdp-input --> compositor keyboard/mouse
@@ -87,7 +114,8 @@ The encoder auto-detects hardware acceleration in priority order: VAAPI (Intel/A
 
 | Interface | Bus | Purpose |
 |-----------|-----|---------|
-| `com.system76.CosmicRdpServer` | Session | Daemon status, reload, stop (settings GUI IPC) |
+| `com.system76.CosmicRdpBroker` | System | Session broker: list/terminate sessions, session count |
+| `com.system76.CosmicRdpServer` | Session | Per-user daemon: status, reload, stop (settings GUI IPC) |
 | `org.freedesktop.impl.portal.RemoteDesktop` | Session | Portal for input injection (called by rdp-input) |
 | `org.freedesktop.impl.portal.ScreenCast` | Session | Portal for screen capture (called by rdp-capture) |
 
@@ -119,6 +147,7 @@ just test                # Run tests
 # Or build directly with Nix
 nix build                           # Build server
 nix build .#cosmic-rdp-settings     # Build settings GUI
+nix build .#cosmic-rdp-broker       # Build session broker
 ```
 
 ### Using Cargo (requires system libraries)
@@ -160,14 +189,18 @@ just build-debug               # Debug build
 just build-release             # Release build
 just build-settings-debug      # Build settings GUI (debug)
 just build-settings-release    # Build settings GUI (release)
+just build-broker-debug        # Build session broker (debug)
+just build-broker-release      # Build session broker (release)
 just check                     # Clippy with pedantic warnings
 just run                       # Run server with RUST_BACKTRACE=full
 just run-settings              # Run settings GUI
+just run-broker                # Run session broker
 just test                      # Run all workspace tests
 just fmt                       # Format code
 just clean                     # Clean build artifacts
 sudo just install              # Install server to /usr/bin + desktop entry
 sudo just install-settings     # Install settings GUI to /usr/bin + desktop entry
+sudo just install-broker       # Install session broker to /usr/bin
 sudo just install-all          # Install everything
 ```
 
@@ -178,7 +211,7 @@ Create a `PKGBUILD`:
 ```bash
 # Maintainer: Your Name <you@example.com>
 pkgname=cosmic-rdp-server
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="RDP server for the COSMIC Desktop Environment"
 arch=('x86_64' 'aarch64')
@@ -263,8 +296,9 @@ override_dh_auto_install:
 
 **`debian/changelog`:**
 ```
-cosmic-rdp-server (0.2.0-1) unstable; urgency=medium
+cosmic-rdp-server (0.3.0-1) unstable; urgency=medium
 
+  * Multi-user multi-session broker (PAM auth, per-user isolation).
   * H.264 EGFX streaming with correct colors.
   * Hardware-accelerated encoding (VAAPI/NVENC).
   * COSMIC Settings GUI.
@@ -430,6 +464,34 @@ channels = 2
 | `sample_rate` | int | `44100` | Sample rate in Hz |
 | `channels` | int | `2` | Number of audio channels (1=mono, 2=stereo) |
 
+### Session Broker Configuration
+
+The multi-user session broker (`cosmic-rdp-broker`) has its own TOML configuration. Default: `/etc/cosmic-rdp-broker/config.toml`
+
+```toml
+bind = "0.0.0.0:3389"
+server_binary = "/usr/bin/cosmic-rdp-server"
+port_range_start = 3390
+port_range_end = 3489
+pam_service = "cosmic-rdp"
+idle_timeout_secs = 3600
+max_sessions = 100
+session_policy = "OnePerUser"   # or "ReplaceExisting"
+state_file = "/var/lib/cosmic-rdp-broker/sessions.json"
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `bind` | string | `"0.0.0.0:3389"` | Address and port for the broker to listen on |
+| `server_binary` | string | auto | Path to the `cosmic-rdp-server` binary |
+| `port_range_start` | int | `3390` | Start of the port range for per-user sessions |
+| `port_range_end` | int | `3489` | End of the port range (supports up to 100 concurrent users) |
+| `pam_service` | string | `"cosmic-rdp"` | PAM service name for authentication |
+| `idle_timeout_secs` | int | `3600` | Seconds of idle time before a session is terminated |
+| `max_sessions` | int | `100` | Maximum number of concurrent user sessions |
+| `session_policy` | string | `"OnePerUser"` | `OnePerUser` reconnects to existing sessions; `ReplaceExisting` terminates old sessions |
+| `state_file` | string | see above | Path to the JSON session persistence file |
+
 ## Installation
 
 ### NixOS Module
@@ -504,6 +566,27 @@ services.cosmic-rdp-server = {
 | `settings` | attrs | `{}` | TOML configuration (see Configuration section) |
 
 The systemd service runs as a user service (`graphical-session.target`) with security hardening (no new privileges, read-only home, private tmp, restricted syscalls).
+
+#### Multi-user broker setup (NixOS)
+
+For multi-user remote desktop access, enable the session broker alongside the per-user server:
+
+```nix
+services.cosmic-rdp-broker = {
+  enable = true;
+  openFirewall = true;
+
+  settings = {
+    bind = "0.0.0.0:3389";
+    port_range_start = 3390;
+    port_range_end = 3489;
+    max_sessions = 100;
+    idle_timeout_secs = 3600;
+  };
+};
+```
+
+The broker runs as a system service (root) to perform PAM authentication and spawn per-user sessions via `systemd-run`. It automatically configures PAM and creates a systemd slice (`cosmic-rdp-sessions.slice`) with resource limits (8 GB memory, 4096 tasks) for all RDP sessions combined.
 
 ### Home Manager Module
 
@@ -720,13 +803,19 @@ D-Bus interface chain (verified compatible):
 
 ## D-Bus Interface
 
-The daemon exposes a D-Bus interface at `com.system76.CosmicRdpServer` on the session bus for IPC with the settings GUI:
+**Per-user daemon** (`com.system76.CosmicRdpServer` on the session bus):
 
 - **Properties:** `Status` (Running/Stopped/Error), `BindAddress`
 - **Methods:** `Reload`, `Stop`
 - **Signals:** Status change notifications
 
 The settings GUI (`cosmic-rdp-settings`) communicates with the daemon over this interface to display server status and trigger configuration reloads.
+
+**Session broker** (`com.system76.CosmicRdpBroker` on the system bus):
+
+- **Methods:** `ListSessions` (returns all active sessions), `TerminateSession(username)`, `ActiveSessionCount`
+
+The broker's D-Bus interface can be used for monitoring and administration of multi-user sessions.
 
 ## Logging
 
@@ -779,10 +868,9 @@ RUST_LOG=rdp_capture=trace,rdp_input=debug cosmic-rdp-server
 
 ## Known Limitations
 
-- **Single client:** Only one RDP client can connect at a time
 - **Dynamic resize:** Resize during an active EGFX session may trigger a reconnection loop; bitmap-mode resize works correctly
 - **Cursor shapes:** SPA cursor metadata extraction requires unsafe FFI not yet implemented; cursor position is forwarded but custom cursor bitmaps from PipeWire are stubbed
-- **Unicode input:** Unicode key events (IME) are not yet supported
+- **Unicode input:** Full IME/compose input is not yet supported; common control characters (Backspace, Tab, Enter, Escape, Delete) sent as Unicode events are handled
 
 ## License
 
