@@ -72,7 +72,7 @@ impl RdpServerInputHandler for LiveInputHandler {
             //
             // Arbitrary Unicode character injection (e.g. from IME composition)
             // requires zwp_text_input_v3 or a custom keymap, which is deferred
-            // until compositor-side support matures (see issue #18).
+            // until compositor-side support matures (see issue #23).
             KeyboardEvent::UnicodePressed(codepoint) => {
                 if let Some((code, extended)) = unicode_to_scancode(codepoint) {
                     self.input.key_press(code, extended);

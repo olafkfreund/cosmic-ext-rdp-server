@@ -870,7 +870,7 @@ RUST_LOG=rdp_capture=trace,rdp_input=debug cosmic-rdp-server
 
 - **Dynamic resize:** Resize during an active EGFX session may trigger a reconnection loop; bitmap-mode resize works correctly
 - **Cursor shapes:** SPA cursor metadata extraction requires unsafe FFI not yet implemented; cursor position is forwarded but custom cursor bitmaps from PipeWire are stubbed
-- **Unicode input:** Full IME/compose input is not yet supported; common control characters (Backspace, Tab, Enter, Escape, Delete) sent as Unicode events are handled
+- **Unicode input:** Full IME/compose input is not yet supported ([#23](https://github.com/olafkfreund/cosmic-rdp-server/issues/23)); common control characters (Backspace, Tab, Enter, Escape, Delete) sent as Unicode events are handled
 
 ## License
 
