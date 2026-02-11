@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 
 use ironrdp_core::{encode_vec, impl_as_any, Encode, WriteCursor};
 use ironrdp_dvc::{DvcEncode, DvcMessage, DvcProcessor, DvcServerProcessor};
-use ironrdp_egfx::pdu::{Avc420Region, CapabilitiesAdvertisePdu, CapabilitySet};
+use ironrdp_egfx::pdu::{annex_b_to_avc, Avc420Region, CapabilitiesAdvertisePdu, CapabilitySet};
 use ironrdp_egfx::server::{GraphicsPipelineHandler, GraphicsPipelineServer};
 use ironrdp_pdu::PduResult;
 use ironrdp_server::ServerEvent;
@@ -289,13 +289,17 @@ impl EgfxController {
             return false;
         }
 
+        // GStreamer outputs Annex B format (start-code prefixed NALUs).
+        // MS-RDPEGFX requires AVC format (length-prefixed NALUs).
+        let avc_data = annex_b_to_avc(h264_data);
+
         let region = Avc420Region::full_frame(width, height, EGFX_QP);
         let regions = [region];
 
         let Some(frame_id) =
             inner
                 .server
-                .send_avc420_frame(surface_id, h264_data, &regions, timestamp_ms)
+                .send_avc420_frame(surface_id, &avc_data, &regions, timestamp_ms)
         else {
             return false;
         };

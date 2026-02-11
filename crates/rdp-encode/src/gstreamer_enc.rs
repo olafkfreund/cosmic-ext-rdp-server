@@ -413,9 +413,13 @@ fn configure_encoder(encoder: &gst::Element, encoder_type: EncoderType, config: 
         EncoderType::Software => {
             encoder.set_property("bitrate", bitrate_kbps);
             encoder.set_property("key-int-max", config.keyframe_interval);
-            // Ensure x264 signals full-range YUV in the H.264 VUI parameters,
-            // matching the full-range (0-255) I420 from our capsfilter.
-            encoder.set_property_from_str("option-string", "fullrange=on");
+            // Signal full-range BT.709 in the H.264 VUI parameters so decoders
+            // know the exact color space. Matches our capsfilter colorimetry
+            // (1:3:5:1 = full-range, BT.709 matrix/transfer/primaries).
+            encoder.set_property_from_str(
+                "option-string",
+                "colormatrix=bt709:transfer=bt709:colorprim=bt709:fullrange=on",
+            );
             if config.low_latency {
                 encoder.set_property_from_str("tune", "zerolatency");
                 encoder.set_property_from_str("speed-preset", "ultrafast");
