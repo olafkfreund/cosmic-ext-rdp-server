@@ -6,11 +6,12 @@ RDP server for the COSMIC Desktop Environment. Allows remote desktop access usin
 
 ## Architecture
 
-Standalone daemon (direct Wayland client) with 6 crates:
+Standalone daemon (direct Wayland client) with 7 crates:
 
 | Crate | Purpose |
 |-------|---------|
 | `cosmic-rdp-server` | Main binary: CLI, config, TLS, D-Bus server, orchestration |
+| `cosmic-rdp-broker` | Multi-user session broker: TCP proxy, X.224 routing, session lifecycle |
 | `cosmic-rdp-settings` | COSMIC settings GUI: config editor, D-Bus status, nav pages |
 | `rdp-dbus` | Shared D-Bus types, config structs, client proxy |
 | `rdp-capture` | Screen capture via ScreenCast portal + PipeWire |
@@ -25,17 +26,22 @@ just build-debug        # Debug build
 just build-release      # Release build
 just build-settings-debug   # Build settings GUI (debug)
 just build-settings-release # Build settings GUI (release)
+just build-broker-debug     # Build broker (debug)
+just build-broker-release   # Build broker (release)
 just check              # Clippy with pedantic warnings
 just run                # Run server with RUST_BACKTRACE=full
 just run-settings       # Run settings GUI
+just run-broker         # Run broker
 just test               # Run tests
 just clean              # Clean build artifacts
 sudo just install       # Install server to system
 sudo just install-settings  # Install settings GUI to system
+sudo just install-broker    # Install broker to system
 sudo just install-all   # Install everything
 nix develop             # Enter dev shell with all dependencies
 nix build               # Build server with Nix
 nix build .#cosmic-rdp-settings  # Build settings GUI with Nix
+nix build .#cosmic-rdp-broker    # Build broker with Nix
 ```
 
 ## Key Dependencies
@@ -79,3 +85,4 @@ Patterns adapted from `cosmic-display-stream`:
 - **Phase 6**: Clipboard, dynamic resize, graceful shutdown (DONE - CLIPRDR text, display resize, SIGINT/SIGTERM)
 - **Phase 7**: Audio forwarding, multi-monitor, cursor shape (DONE - RDPSND via PipeWire, compositor, cursor metadata)
 - **Phase 8**: COSMIC Settings UI (DONE - settings GUI, D-Bus IPC, config editor, NixOS module update)
+- **Phase 9**: Multi-user session broker (DONE - TCP proxy broker, X.224 cookie routing, session registry, systemd-run spawner, idle cleanup, D-Bus management, NixOS module)

@@ -103,6 +103,28 @@
           cargoArtifacts = settingsCargoArtifacts;
           cargoExtraArgs = "--package cosmic-rdp-settings";
         });
+
+        # Broker only needs base deps (no GUI, no GStreamer runtime).
+        brokerPkgDef = pkgDef // {
+          buildInputs = with pkgs; [
+            wayland
+            libxkbcommon
+            pipewire
+            gst_all_1.gstreamer
+            gst_all_1.gst-plugins-base
+            libei
+            openssl
+            clang
+            linux-pam
+          ];
+        };
+
+        brokerCargoArtifacts = craneLib.buildDepsOnly brokerPkgDef;
+
+        cosmic-rdp-broker = craneLib.buildPackage (brokerPkgDef // {
+          cargoArtifacts = brokerCargoArtifacts;
+          cargoExtraArgs = "--package cosmic-rdp-broker";
+        });
       in
       {
         checks = {
@@ -128,6 +150,15 @@
               just prefix=$out install-settings
             '';
           });
+
+          cosmic-rdp-broker = cosmic-rdp-broker.overrideAttrs (oldAttrs: {
+            buildPhase = ''
+              just prefix=$out build-broker-release
+            '';
+            installPhase = ''
+              just prefix=$out install-broker
+            '';
+          });
         };
 
         apps = {
@@ -136,6 +167,9 @@
           };
           cosmic-rdp-settings = flake-utils.lib.mkApp {
             drv = self.packages.${system}.cosmic-rdp-settings;
+          };
+          cosmic-rdp-broker = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.cosmic-rdp-broker;
           };
         };
 
@@ -146,6 +180,7 @@
             clippy
             rustfmt
             cargo-watch
+            linux-pam
           ]);
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (runtimeDeps ++ guiRuntimeDeps);
@@ -163,6 +198,7 @@
       nixosModules = {
         default = import ./nix/module.nix;
         cosmic-rdp-server = import ./nix/module.nix;
+        cosmic-rdp-broker = import ./nix/broker-module.nix;
       };
 
       homeManagerModules = {
@@ -173,6 +209,7 @@
       overlays.default = final: prev: {
         cosmic-rdp-server = self.packages.${prev.system}.default;
         cosmic-rdp-settings = self.packages.${prev.system}.cosmic-rdp-settings;
+        cosmic-rdp-broker = self.packages.${prev.system}.cosmic-rdp-broker;
       };
     };
 }

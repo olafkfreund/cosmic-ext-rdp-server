@@ -1,0 +1,45 @@
+[package]
+name = "cosmic-rdp-broker"
+description = "Multi-user RDP session broker for the COSMIC Desktop Environment"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "cosmic-rdp-broker"
+path = "src/main.rs"
+
+[dependencies]
+# Internal crates
+rdp-dbus.workspace = true
+
+# Async runtime
+tokio.workspace = true
+
+# CLI
+clap.workspace = true
+
+# Configuration
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# D-Bus
+zbus = { workspace = true, default-features = false }
+
+# Unix / PAM
+nix.workspace = true
+
+# Utilities
+rustix.workspace = true

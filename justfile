@@ -1,7 +1,9 @@
 name := 'cosmic-rdp-server'
 settings-name := 'cosmic-rdp-settings'
+broker-name := 'cosmic-rdp-broker'
 export APPID := 'com.system76.CosmicRdpServer'
 export SETTINGS_APPID := 'com.system76.CosmicRdpSettings'
+export BROKER_APPID := 'com.system76.CosmicRdpBroker'
 
 rootdir := ''
 prefix := '/usr'
@@ -29,6 +31,14 @@ build-settings-debug *args:
 build-settings-release *args:
     cargo build --release -p cosmic-rdp-settings {{args}}
 
+# Build broker (debug)
+build-broker-debug *args:
+    cargo build -p cosmic-rdp-broker {{args}}
+
+# Build broker (release)
+build-broker-release *args:
+    cargo build --release -p cosmic-rdp-broker {{args}}
+
 # Run clippy with pedantic warnings
 check *args:
     cargo clippy --workspace --all-targets -- -W clippy::pedantic {{args}}
@@ -40,6 +50,10 @@ run *args:
 # Run settings app
 run-settings *args:
     RUST_BACKTRACE=full cargo run -p cosmic-rdp-settings -- {{args}}
+
+# Run broker
+run-broker *args:
+    RUST_BACKTRACE=full cargo run -p cosmic-rdp-broker -- {{args}}
 
 # Run tests
 test *args:
@@ -67,8 +81,12 @@ install-settings:
     install -Dm0755 target/release/{{settings-name}} {{bin-dir}}/{{settings-name}}
     install -Dm0644 data/{{SETTINGS_APPID}}.desktop {{share-dir}}/applications/{{SETTINGS_APPID}}.desktop
 
+# Install broker to system
+install-broker:
+    install -Dm0755 target/release/{{broker-name}} {{bin-dir}}/{{broker-name}}
+
 # Install everything
-install-all: install install-settings
+install-all: install install-settings install-broker
 
 # Uninstall server from system
 uninstall:
@@ -80,5 +98,9 @@ uninstall-settings:
     rm -f {{bin-dir}}/{{settings-name}}
     rm -f {{share-dir}}/applications/{{SETTINGS_APPID}}.desktop
 
+# Uninstall broker from system
+uninstall-broker:
+    rm -f {{bin-dir}}/{{broker-name}}
+
 # Uninstall everything
-uninstall-all: uninstall uninstall-settings
+uninstall-all: uninstall uninstall-settings uninstall-broker

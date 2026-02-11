@@ -169,8 +169,8 @@ pub struct CaptureConfig {
     pub multi_monitor: bool,
 
     /// Swap Red and Blue color channels.  Enabled by default because
-    /// COSMIC's xdg-desktop-portal delivers RGBx byte-order data while
-    /// reporting BGRx format.  Set to `false` if colors look inverted.
+    /// COSMIC's xdg-desktop-portal delivers `RGBx` byte-order data while
+    /// reporting `BGRx` format.  Set to `false` if colors look inverted.
     pub swap_colors: bool,
 }
 
