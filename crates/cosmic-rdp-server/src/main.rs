@@ -225,10 +225,21 @@ async fn run_live_or_fallback(
     make_sound: &dyn Fn() -> Option<Box<dyn ironrdp_server::SoundServerFactory>>,
     dbus_cmd_rx: &mut tokio::sync::mpsc::Receiver<rdp_dbus::server::DaemonCommand>,
 ) -> Result<ShutdownReason> {
-    match rdp_capture::start_capture(None, cfg.capture.channel_capacity, cfg.capture.swap_colors)
-        .await
+    let restore_token = load_restore_token();
+    match rdp_capture::start_capture(
+        restore_token.as_deref(),
+        cfg.capture.channel_capacity,
+        cfg.capture.swap_colors,
+    )
+    .await
     {
         Ok((capture_handle, event_rx, desktop_info)) => {
+            // Persist the restore token so subsequent service restarts can
+            // skip the ScreenCast portal dialog.
+            if let Some(ref token) = desktop_info.restore_token {
+                save_restore_token(token);
+            }
+
             tracing::info!(
                 width = desktop_info.width,
                 height = desktop_info.height,
@@ -325,4 +336,44 @@ async fn run_with_shutdown(
 /// Returns `true` if the address is a loopback address (`127.0.0.1`, `::1`).
 fn is_localhost(ip: std::net::IpAddr) -> bool {
     ip.is_loopback()
+}
+
+/// Path to the `ScreenCast` portal restore token file.
+///
+/// Saved under `$XDG_RUNTIME_DIR/cosmic-rdp-server/restore_token` so it
+/// persists across service restarts within the same login session but is
+/// cleared on logout.
+fn restore_token_path() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(|dir| PathBuf::from(dir).join("cosmic-rdp-server").join("restore_token"))
+}
+
+/// Load a previously saved `ScreenCast` portal restore token.
+fn load_restore_token() -> Option<String> {
+    let path = restore_token_path()?;
+    let token = std::fs::read_to_string(&path).ok()?;
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    tracing::info!(path = %path.display(), "Loaded ScreenCast restore token");
+    Some(token.to_string())
+}
+
+/// Save the `ScreenCast` portal restore token for future service restarts.
+fn save_restore_token(token: &str) {
+    let Some(path) = restore_token_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            tracing::warn!("Failed to create restore token dir: {e}");
+            return;
+        }
+    }
+    if let Err(e) = std::fs::write(&path, token) {
+        tracing::warn!("Failed to save restore token: {e}");
+    } else {
+        tracing::info!(path = %path.display(), "Saved ScreenCast restore token");
+    }
 }
