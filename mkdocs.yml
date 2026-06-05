@@ -1,0 +1,11 @@
+# MkDocs config for Backstage TechDocs.
+# Edit at will — Backstage rebuilds on next view.
+# https://backstage.io/docs/features/techdocs/getting-started
+
+site_name: cosmic-ext-rdp-server
+site_description: cosmic-ext-rdp-server
+
+docs_dir: docs
+
+plugins:
+  - techdocs-core
